@@ -30,7 +30,7 @@ pub fn new_cipher(key []byte) ?Cipher {
 		return error('crypto.rc4: invalid key size ' + key.len.str())
 	}
 	mut c := Cipher{
-		s: [u32(0)].repeat(256)
+		s: []u32{len:(256)}
 	}
 	for i in 0..256 {
 		c.s[i] = u32(i)
@@ -59,7 +59,7 @@ pub fn (mut c Cipher) reset() {
 
 // xor_key_stream sets dst to the result of XORing src with the key stream.
 // Dst and src must overlap entirely or not at all.
-pub fn (mut c Cipher) xor_key_stream(mut dst []byte, src []byte) {
+pub fn (mut c Cipher) xor_key_stream(mut dst, src []byte) {
 	if src.len == 0 {
 		return
 	}

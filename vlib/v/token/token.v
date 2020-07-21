@@ -108,6 +108,9 @@ pub enum Kind {
 	key_match
 	key_module
 	key_mut
+	key_shared
+	key_lock
+	key_rlock
 	key_none
 	key_return
 	key_select
@@ -148,7 +151,7 @@ fn build_keys() map[string]Kind {
 
 // TODO remove once we have `enum Kind { name('name') if('if') ... }`
 fn build_token_str() []string {
-	mut s := [''].repeat(nr_tokens)
+	mut s := []string{len:(nr_tokens)}
 	s[Kind.unknown] = 'unknown'
 	s[Kind.eof] = 'eof'
 	s[Kind.name] = 'name'
@@ -226,6 +229,9 @@ fn build_token_str() []string {
 	s[Kind.key_goto] = 'goto'
 	s[Kind.key_const] = 'const'
 	s[Kind.key_mut] = 'mut'
+	s[Kind.key_shared] = 'shared'
+	s[Kind.key_lock] = 'lock'
+	s[Kind.key_rlock] = 'rlock'
 	s[Kind.key_type] = 'type'
 	s[Kind.key_for] = 'for'
 	s[Kind.key_switch] = 'switch'

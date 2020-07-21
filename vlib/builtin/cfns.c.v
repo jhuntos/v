@@ -3,7 +3,7 @@ module builtin
 // <string.h>
 fn C.memcpy(byteptr, byteptr, int) voidptr
 
-
+fn C.memcmp(byteptr, byteptr, int) int
 fn C.memmove(byteptr, byteptr, int) voidptr
 fn C.calloc(int)  byteptr
 fn C.malloc(int) byteptr
@@ -18,13 +18,13 @@ fn C.qsort(voidptr, int, int, qsort_callback_func)
 fn C.sprintf(a ...voidptr) int
 
 
-fn C.strlen(s byteptr) int
+fn C.strlen(s charptr) int
 
 fn C.sscanf(byteptr, byteptr,...byteptr) int
 
 fn C.isdigit(s byteptr) bool
 // stdio.h
-fn C.popen(c byteptr, t byteptr) voidptr
+fn C.popen(c charptr, t charptr) voidptr
 
 // <execinfo.h>
 fn C.backtrace(a &voidptr, size int) int
@@ -35,7 +35,7 @@ fn C.backtrace_symbols_fd(a &voidptr, size int, fd int)
 pub fn proc_pidpath(int, voidptr, int) int
 
 
-fn C.realpath(byteptr, byteptr) &char
+fn C.realpath(charptr, charptr) &char
 
 
 fn C.chmod(byteptr, int) int
@@ -43,6 +43,7 @@ fn C.chmod(byteptr, int) int
 
 fn C.printf(byteptr, ...byteptr) int
 
+fn C.puts(byteptr) int
 
 fn C.fputs(byteptr) int
 
@@ -70,10 +71,10 @@ fn C.pclose() int
 fn C.system() int
 
 
-fn C.setenv() int
+fn C.setenv(charptr) int
 
 
-fn C.unsetenv() int
+fn C.unsetenv(charptr) int
 
 
 fn C.access() int
@@ -94,7 +95,7 @@ fn C.fread() int
 fn C.rewind() int
 
 
-fn C.stat() int
+fn C.stat(charptr) int
 
 
 fn C.lstat() int
@@ -124,7 +125,8 @@ fn C.mktime() int
 fn C.gettimeofday() int
 
 
-fn C.sleep() int
+[trusted_fn]
+fn C.sleep(int) int
 
 
 fn C.usleep() int
@@ -151,9 +153,11 @@ fn C.tolower() int
 fn C.toupper() int
 
 
+[trusted_fn]
 fn C.getchar() int
 
 
+[trusted_fn]
 fn C.strerror(int) charptr
 
 
@@ -190,7 +194,15 @@ fn C._fileno(int) int
 fn C._get_osfhandle(fd int) C.intptr_t
 
 
+fn C.GetModuleFileName() int
 fn C.GetModuleFileNameW(hModule voidptr, lpFilename &u16, nSize u32) u32
+
+
+fn C.CreateFile() voidptr
+fn C.CreateFileW(lpFilename &u16, dwDesiredAccess u32, dwShareMode u32, lpSecurityAttributes &u16, dwCreationDisposition u32, dwFlagsAndAttributes u32, hTemplateFile voidptr) u32
+
+
+fn C.GetFinalPathNameByHandleW(hFile voidptr, lpFilePath &u16, nSize u32, dwFlags u32) int
 
 
 fn C.CreatePipe(hReadPipe &voidptr, hWritePipe &voidptr, lpPipeAttributes voidptr, nSize u32) bool
@@ -303,9 +315,6 @@ fn C.WriteConsole() voidptr
 fn C.WriteFile() voidptr
 
 
-fn C.GetModuleFileName() int
-
-
 fn C._wchdir()
 
 
@@ -389,11 +398,40 @@ fn C.ReleaseMutex(voidptr) bool
 fn C.CreateEvent(int, bool, bool, byteptr) voidptr
 fn C.SetEvent(voidptr) int
 
+fn C.CreateSemaphore(voidptr, int, int, voidptr) voidptr
+fn C.ReleaseSemaphore(voidptr, int, voidptr) voidptr
+
+fn C.InitializeSRWLock(voidptr)
+fn C.AcquireSRWLockShared(voidptr)
+fn C.AcquireSRWLockExclusive(voidptr)
+fn C.ReleaseSRWLockShared(voidptr)
+fn C.ReleaseSRWLockExclusive(voidptr)
 
 // pthread.h
 fn C.pthread_mutex_init(voidptr, voidptr) int
 fn C.pthread_mutex_lock(voidptr) int
 fn C.pthread_mutex_unlock(voidptr) int
+
+fn C.pthread_rwlockattr_init(voidptr) int
+fn C.pthread_rwlockattr_setkind_np(voidptr, int) int
+fn C.pthread_rwlockattr_setpshared(voidptr, int) int
+fn C.pthread_rwlock_init(voidptr, voidptr) int
+fn C.pthread_rwlock_rdlock(voidptr) int
+fn C.pthread_rwlock_wrlock(voidptr) int
+fn C.pthread_rwlock_unlock(voidptr) int
+
+fn C.pthread_condattr_init(voidptr) int
+fn C.pthread_condattr_setpshared(voidptr, int) int
+fn C.pthread_cond_init(voidptr, voidptr) int
+fn C.pthread_cond_signal(voidptr) int
+fn C.pthread_cond_wait(voidptr, voidptr) int
+fn C.pthread_cond_timedwait(voidptr, voidptr, voidptr) int
+
+fn C.sem_init(voidptr, int, u32) int
+fn C.sem_post(voidptr) int
+fn C.sem_wait(voidptr) int
+fn C.sem_trywait(voidptr) int
+fn C.sem_timedwait(voidptr, voidptr) int
 
 fn C.read(fd int, buf voidptr, count size_t) int
 fn C.write(fd int, buf voidptr, count size_t) int

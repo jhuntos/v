@@ -871,3 +871,104 @@ fn test_mutli_array_index() {
 	b[0][0] = 1
 	assert '$b' == '[[1, 0, 0], [0, 0, 0]]'
 }
+
+fn test_plus_assign_string() {
+	mut a := ['']
+	a[0] += 'abc'
+	assert a == ['abc']
+}
+
+fn mut_arr_with_eq_in_fn(mut a []int) {
+	if a == [1,2,3,4] {
+		a[0] = 0
+	}
+	if [0,2,3,4] == a {
+		a[1] = 0
+	}
+	if !(a != [0,0,3,4]) {
+		a[2] = 0
+	}
+	if !([0,0,0,4] != a) {
+		a[3] = 0
+	}
+}
+
+fn test_mut_arr_with_eq_in_fn() {
+	mut a := [1,2,3,4]
+	mut_arr_with_eq_in_fn(mut a)
+	assert a == [0,0,0,0]
+}
+
+fn array_in_mut(mut a []int) {
+	if 1 in a {
+		a[0] = 2
+	}
+}
+
+fn test_array_in_mut() {
+	mut a := [1,2]
+	array_in_mut(mut a)
+	assert a == [2,2]
+}
+
+// test array delete in function with mut argument
+fn delete_nums(mut arr []int) {
+	arr.delete(0)
+}
+
+fn test_array_delete_in_mut() {
+	mut nums := [1, 2, 3]
+	delete_nums(mut nums)
+	assert nums == [2, 3]
+}
+
+// test array add in function with mut argument
+fn add_nums(mut arr []int) {
+	arr << 4
+}
+
+fn test_array_add_in_mut() {
+	mut nums := [1, 2, 3]
+	add_nums(mut nums)
+	assert nums == [1, 2, 3, 4]
+}
+
+fn test_reverse_in_place() {
+	mut a := [1, 2, 3, 4]
+	a.reverse_in_place()
+	assert a == [4, 3, 2, 1]
+
+	mut b := ['a', 'b', 'c']
+	b.reverse_in_place()
+	assert b == ['c', 'b', 'a']
+
+	mut c := [[1, 2], [3, 4], [5, 6]]
+	c.reverse_in_place()
+	assert c == [[5, 6], [3, 4], [1, 2]]
+}
+
+fn test_array_int_pop() {
+	mut a := [1,2,3,4,5]
+	assert a.len == 5
+	x := a.last()
+	y := a.pop()
+	assert x == y
+	assert a.len == 4
+	z := a.pop()
+	assert a.len == 3
+	assert z == 4
+	a.pop()
+	a.pop()
+	final := a.pop()
+	assert final == 1
+}
+
+fn test_array_string_pop() {
+	mut a := ['abc', 'def', 'xyz']
+	assert a.len == 3
+	assert a.pop() == 'xyz'
+	assert a.pop() == 'def'
+	assert a.pop() == 'abc'
+	assert a.len == 0
+	assert a.cap == 3
+}

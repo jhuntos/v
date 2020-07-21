@@ -6,14 +6,13 @@ import strings
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/utsname.h>
-
 pub const (
 	path_separator = '/'
 	path_delimiter = ':'
 )
 
 const (
-	stdin_value = 0
+	stdin_value  = 0
 	stdout_value = 1
 	stderr_value = 2
 )
@@ -28,17 +27,20 @@ mut:
 }
 
 fn C.uname(name voidptr) int
-fn C.symlink(charptr, charptr) int
+
+fn C.symlink(arg_1, arg_2 charptr) int
 
 pub fn uname() Uname {
 	mut u := Uname{}
-	d := &C.utsname( malloc(int(sizeof(C.utsname))) )
+	utsize := sizeof(C.utsname)
+	x := malloc(int(utsize))
+	d := &C.utsname(x)
 	if C.uname(d) == 0 {
-		u.sysname = cstring_to_vstring(d.sysname)
-		u.nodename = cstring_to_vstring(d.nodename)
-		u.release = cstring_to_vstring(d.release)
-		u.version = cstring_to_vstring(d.version)
-		u.machine = cstring_to_vstring(d.machine)
+		u.sysname = cstring_to_vstring(byteptr(d.sysname))
+		u.nodename = cstring_to_vstring(byteptr(d.nodename))
+		u.release = cstring_to_vstring(byteptr(d.release))
+		u.version = cstring_to_vstring(byteptr(d.version))
+		u.machine = cstring_to_vstring(byteptr(d.machine))
 	}
 	free(d)
 	return u
@@ -46,11 +48,10 @@ pub fn uname() Uname {
 
 fn init_os_args(argc int, argv &&byte) []string {
 	mut args := []string{}
-	//mut args := []string(make(0, argc, sizeof(string)))
-	//mut args := []string{len:argc}
+	// mut args := []string(make(0, argc, sizeof(string)))
+	// mut args := []string{len:argc}
 	for i in 0 .. argc {
-
-		//args [i] = string(argv[i])
+		// args [i] = string(argv[i])
 		args << string(argv[i])
 	}
 	return args
@@ -58,7 +59,7 @@ fn init_os_args(argc int, argv &&byte) []string {
 
 pub fn ls(path string) ?[]string {
 	mut res := []string{}
-	dir := C.opendir(path.str)
+	dir := C.opendir(charptr(path.str))
 	if isnil(dir) {
 		return error('ls() couldnt open dir "$path"')
 	}
@@ -91,20 +92,23 @@ pub fn is_dir(path string) bool {
 	return res
 }
 */
-
 /*
 pub fn (mut f File) fseek(pos, mode int) {
 }
 */
-
-
 // mkdir creates a new directory with the specified path.
 pub fn mkdir(path string) ?bool {
 	if path == '.' {
 		return true
 	}
-	apath := os.real_path(path)
-  /*
+	/*
+	mut k := 0
+	defer {
+		k = 1
+	}
+	*/
+	apath := real_path(path)
+	/*
 	$if linux {
 		$if !android {
 			ret := C.syscall(sys_mkdir, apath.str, 511)
@@ -114,8 +118,11 @@ pub fn mkdir(path string) ?bool {
 			return true
 		}
 	}
-  */
-	r := C.mkdir(apath.str, 511)
+	*/
+	r := unsafe {
+		C.mkdir(charptr(apath.str), 511)
+	}
+	
 	if r == -1 {
 		return error(posix_get_error_msg(C.errno))
 	}
@@ -136,10 +143,10 @@ pub fn exec(cmd string) ?Result {
 	mut res := strings.new_builder(1024)
 	for C.fgets(charptr(buf), 4096, f) != 0 {
 		bufbp := byteptr(buf)
-		res.write_bytes( bufbp, vstrlen(bufbp) )
+		res.write_bytes(bufbp, vstrlen(bufbp))
 	}
 	soutput := res.str()
-	//res.free()
+	// res.free()
 	exit_code := vpclose(f)
 	// if exit_code != 0 {
 	// return error(res)
@@ -151,7 +158,7 @@ pub fn exec(cmd string) ?Result {
 }
 
 pub fn symlink(origin, target string) ?bool {
-	res := C.symlink(origin.str, target.str)
+	res := C.symlink(charptr(origin.str), charptr(target.str))
 	if res == 0 {
 		return true
 	}
@@ -168,14 +175,14 @@ pub fn (mut f File) close() {
 		return
 	}
 	f.opened = false
-  /*
+	/*
 	$if linux {
 		$if !android {
 			C.syscall(sys_close, f.fd)
 			return
 		}
 	}
-  */
+	*/
 	C.fflush(f.cfile)
 	C.fclose(f.cfile)
 }

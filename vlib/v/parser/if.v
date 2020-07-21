@@ -16,41 +16,66 @@ fn (mut p Parser) if_expr() ast.IfExpr {
 	pos := p.tok.position()
 	mut branches := []ast.IfBranch{}
 	mut has_else := false
+	mut comments := []ast.Comment{}
+	mut prev_guard := false
 	for p.tok.kind in [.key_if, .key_else] {
 		p.inside_if = true
 		start_pos := p.tok.position()
-		mut comment := ast.Comment{}
 		if p.tok.kind == .key_if {
 			p.next()
 		} else {
-			// if p.tok.kind == .comment {
-			// p.error('place comments inside {}')
-			// }
-			// comment = p.check_comment()
+			comments << p.eat_comments()
 			p.check(.key_else)
+			comments << p.eat_comments()
 			if p.tok.kind == .key_if {
 				p.next()
 			} else {
+				// else {
 				has_else = true
 				p.inside_if = false
 				end_pos := p.prev_tok.position()
+				body_pos := p.tok.position()
+				// only declare `err` if previous branch was an `if` guard
+				if prev_guard {
+					p.open_scope()
+					p.scope.register('errcode', ast.Var{
+						name: 'errcode'
+						typ: table.int_type
+						pos: body_pos
+						is_used: true
+					})
+					p.scope.register('err', ast.Var{
+						name: 'err'
+						typ: table.string_type
+						pos: body_pos
+						is_used: true
+					})
+				}
 				branches << ast.IfBranch{
 					stmts: p.parse_block()
 					pos: start_pos.extend(end_pos)
-					comment: comment
+					body_pos: body_pos.extend(p.tok.position())
+					comments: comments
 				}
+				if prev_guard {
+					p.close_scope()
+				}
+				comments = []
 				break
 			}
 		}
 		mut cond := ast.Expr{}
-		mut is_or := false
+		mut is_guard := false
+		comments << p.eat_comments()
 		// `if x := opt() {`
 		if p.peek_tok.kind == .decl_assign {
-			is_or = true
 			p.open_scope()
+			is_guard = true
 			var_pos := p.tok.position()
 			var_name := p.check_name()
+			comments << p.eat_comments()
 			p.check(.decl_assign)
+			comments << p.eat_comments()
 			expr := p.expr(0)
 			p.scope.register(var_name, ast.Var{
 				name: var_name
@@ -61,27 +86,50 @@ fn (mut p Parser) if_expr() ast.IfExpr {
 				var_name: var_name
 				expr: expr
 			}
+			prev_guard = true
 		} else {
+			prev_guard = false
 			cond = p.expr(0)
 		}
+		comments << p.eat_comments()
+		mut left_as_name := ''
+		if cond is ast.InfixExpr as infix {
+			// if sum is T
+			is_is_cast := infix.op == .key_is
+			is_ident := infix.left is ast.Ident
+			left_as_name = if is_is_cast && p.tok.kind == .key_as {
+				p.next()
+				p.check_name()
+			} else if is_ident {
+				ident := infix.left as ast.Ident
+				ident.name
+			} else {
+				''
+			}
+		}
 		end_pos := p.prev_tok.position()
+		body_pos := p.tok.position()
 		p.inside_if = false
 		stmts := p.parse_block()
-		if is_or {
+		if is_guard {
 			p.close_scope()
 		}
 		branches << ast.IfBranch{
 			cond: cond
 			stmts: stmts
 			pos: start_pos.extend(end_pos)
-			comment: ast.Comment{}
+			body_pos: body_pos.extend(p.tok.position())
+			comments: comments
+			left_as_name: left_as_name
 		}
+		comments = p.eat_comments()
 		if p.tok.kind != .key_else {
 			break
 		}
 	}
 	return ast.IfExpr{
 		branches: branches
+		post_comments: comments
 		pos: pos
 		has_else: has_else
 	}
@@ -117,18 +165,18 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 			is_else = true
 			p.next()
 		} else if p.tok.kind == .name && !(p.tok.lit == 'C' && p.peek_tok.kind == .dot) &&
-			(p.tok.lit in table.builtin_type_names || (p.tok.lit[0].is_capital() && !p.tok.lit.is_upper()) ||
-			(p.peek_tok.kind == .dot && p.peek_tok2.lit[0].is_capital() ) ) {
+				(p.tok.lit in table.builtin_type_names || p.tok.lit[0].is_capital() ||
+				(p.peek_tok.kind == .dot && p.peek_tok2.lit[0].is_capital())) {
 			if var_name.len == 0 {
 				match cond {
 					ast.Ident {
 						// shadow match cond variable
-						var_name = it.name
+						var_name = cond.name
 					}
-					// ast.SelectorExpr {
-					// 	p.error('expecting `as` (eg. `match user.attribute as user_attr`) when matching struct fields')
-					// }
 					else {
+						// ast.SelectorExpr {
+						// p.error('expecting `as` (eg. `match user.attribute as user_attr`) when matching struct fields')
+						// }
 						// p.error('only variables can be used in sum types matches')
 					}
 				}
@@ -161,14 +209,27 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 				p.parse_type()
 			}
 			is_sum_type = true
-
 		} else {
 			// Expression match
 			for {
 				p.inside_match_case = true
 				expr := p.expr(0)
 				p.inside_match_case = false
-				exprs << expr
+				if p.tok.kind == .dotdot {
+					p.error_with_pos('match only supports inclusive (`...`) ranges, not exclusive (`..`)',
+						p.tok.position())
+				} else if p.tok.kind == .ellipsis {
+					p.next()
+					expr2 := p.expr(0)
+					exprs << ast.RangeExpr{
+						low: expr
+						high: expr2
+						has_low: true
+						has_high: true
+					}
+				} else {
+					exprs << expr
+				}
 				if p.tok.kind != .comma {
 					break
 				}
@@ -180,6 +241,7 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 		p.inside_match_body = true
 		stmts := p.parse_block()
 		p.inside_match_body = false
+		post_comments := p.eat_comments()
 		pos := token.Position{
 			line_nr: branch_first_pos.line_nr
 			pos: branch_first_pos.pos
@@ -191,6 +253,7 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 			pos: pos
 			comment: comment
 			is_else: is_else
+			post_comments: post_comments
 		}
 		p.close_scope()
 		if p.tok.kind == .rcbr {
@@ -204,7 +267,7 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 		len: match_last_pos.pos - match_first_pos.pos + match_last_pos.len
 	}
 	p.check(.rcbr)
-	//return ast.StructInit{}
+	// return ast.StructInit{}
 	return ast.MatchExpr{
 		branches: branches
 		cond: cond

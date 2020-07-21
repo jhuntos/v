@@ -5,7 +5,7 @@ Hello,
 In this guide, we'll build a simple web blog in V.
 
 The benefits of using V for web:
-- A safe, fast, language with the development speed of Python and
+- A safe, fast, language with the development agility of Python or Ruby and
 the performance of C.
 - Zero dependencies: everything you need for web development comes with the language
 in a 1 MB package.
@@ -55,22 +55,22 @@ module main
 
 import vweb
 
-pub struct App {
-mut:
+struct App {
+pub mut:
 	vweb vweb.Context
 }
 
 fn main() {
-	vweb.run<App>(8080)
+	vweb.run<App>(8081)
 }
 
-fn (mut app App) index() {
+pub fn (mut app App) index() vweb.Result {
 	app.vweb.text('Hello, world from vweb!')
+	return vweb.Result{}
 }
 
 pub fn (app &App) init() {}
-pub fn (app &App) reset() {}
-
+pub fn (app &App) init_once() {}
 ```
 
 Run it with
@@ -80,10 +80,10 @@ v run blog.v
 ```
 
 ```
-Running a Vweb app on http://localhost:8080 ...
+Running a Vweb app on http://localhost:8081 ...
 ```
 
-Vweb helpfully provided a link, open http://localhost:8080/ in your browser:
+Vweb helpfully provided a link, open http://localhost:8081/ in your browser:
 
 <img width=662 src="https://github.com/vlang/v/blob/master/tutorials/img/hello.png?raw=true">
 
@@ -114,7 +114,6 @@ text, which isn't frequently used in websites.
 
 ### HTML View
 
-
 Let's return an HTML view instead. Create `index.html` in the same directory:
 
 ```html
@@ -133,9 +132,9 @@ Let's return an HTML view instead. Create `index.html` in the same directory:
 and update our `index()` action so that it returns the HTML view we just created:
 
 ```v
-fn (mut app App) index() {
+pub fn (mut app App) index() vweb.Result {
 	message := 'Hello, world from Vweb!'
-	$vweb.html()
+	return $vweb.html()
 }
 ```
 
@@ -169,74 +168,72 @@ into a single binary file together with the web application itself.
 
 - All errors in the templates are guaranteed to be caught during compilation.
 
+
 ### Fetching data with V ORM
 
 Now let's display some articles!
 
-We'll be using V's builtin ORM and a Postgres database. (V ORM will also
-support MySQL, SQLite, and SQL Server soon.)
+We'll be using V's builtin ORM and a SQLite database. 
+(V ORM will also support MySQL, Postgre, and SQL Server soon.)
 
-Create a SQL file with the schema:
+Create a SQLite file with the schema:
 ```sql
-create database blog;
+drop table if exists Article;
 
-\c blog
-
-drop table articles;
-
-create table articles (
-	id serial primary key,
-	title text default '',
-	text text default ''
+create table Article (
+	id integer primary key,
+	title text default "",
+	text text default ""
 );
 
-insert into articles (title, text) values (
-	'Hello, world!',
-	'V is great.'
+insert into Article (title, text) values (
+	"Hello, world!",
+	"V is great."
 );
 
-insert into articles (title, text) values (
-	'Second post.',
-	'Hm... what should I write about?'
+insert into Article (title, text) values (
+	"Second post.",
+	"Hm... what should I write about?"
 );
 ```
 
-Run the file with `psql -f blog.sql`.
+Run the file with `sqlite3 blog.db < blog.sqlite`.
 
 
-Add a Postgres DB handle to `App`:
+Add a SQLite handle to `App`:
 
 ```v
+import sqlite
+
 struct App {
-mut:
+pub mut:
 	vweb vweb.Context
-	db   pg.DB
+	db   sqlite.DB
 }
 ```
 
 
 
-Modify the `init()` method we created earlier to connect to a database:
+Modify the `init_once()` method we created earlier to connect to a database:
 
 ```v
-pub fn (mut app App) init() {
-	db := pg.connect(pg.Config{
-		host:   '127.0.0.1'
-		dbname: 'blog'
-		user:   'blog'
-	}) or { panic(err) }
+pub fn (mut app App) init_once() {
+	db := sqlite.connect(':memory:') or { panic(err) }
+	db.exec('create table `Article` (id integer primary key, title text default "", text text default "")')
+	db.exec('insert into Article (title, text) values ("Hello, world!", "V is great.")')
+	db.exec('insert into Article (title, text) values ("Second post.", "Hm... what should I write about?")')
 	app.db = db
 }
 ```
 
-Code in the `init()` function is run only once during app's startup, so we are going
+Code in the `init_once()` function is run only once during app's startup, so we are going
 to have one DB connection for all requests.
 
 Create a new file `article.v`:
 
 
 ```v
-
+// article.v
 module main
 
 struct Article {
@@ -246,18 +243,18 @@ struct Article {
 }
 
 pub fn (app &App) find_all_articles() []Article {
-	db := app.db
-	articles := db.select from Article
-	return articles
+	return sql app.db {
+		select from Article
+	}
 }
 ```
 
 Let's fetch the articles in the `index()` action:
 
 ```v
-fn (app &App) index() {
+pub fn (app &App) index() vweb.Result {
 	articles := app.find_all_articles()
-	$vweb.html()
+	return $vweb.html()
 }
 ```
 
@@ -287,7 +284,9 @@ The built-in V ORM uses a syntax very similar to SQL. The queries are built with
 For example, if we only wanted to find articles with ids between 100 and 200, we'd do:
 
 ```
-articles := db.select from Article where id >= 100 && id <= 200
+return sql app.db {
+	select from Article where id >= 100 && id <= 200
+}
 ```
 
 Retrieving a single article is very simple:
@@ -295,9 +294,9 @@ Retrieving a single article is very simple:
 ```v
 
 pub fn (app &App) retrieve_article() ?Article {
-	db := app.db
-	article := db.select from Article limit 1
-	return article
+	return sql app.db {
+		select from Article limit 1
+	}
 }
 ```
 
@@ -310,10 +309,6 @@ article := app.retrieve_article(10) or {
 	return
 }
 ```
-
-
-> `db := app.db` is a temporary limitation in the
-V ORM, soon this will not be needed.
 
 
 ### Adding new articles
@@ -336,7 +331,7 @@ Create `new.html`:
 ```
 
 ```v
-pub fn (mut app App) new_article() {
+pub fn (mut app App) new_article() vweb.Result {
 	title := app.vweb.form['title']
 	text := app.vweb.form['text']
 	if title == '' || text == ''  {
@@ -347,9 +342,11 @@ pub fn (mut app App) new_article() {
 		title: title
 		text: text
 	}
-	db := app.db
-	db.insert(article)
-	app.vweb.redirect('/article/')
+	println(article)
+	sql app.db {
+		insert article into Article
+	}
+	return app.vweb.redirect('/article/')
 }
 ```
 

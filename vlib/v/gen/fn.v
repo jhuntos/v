@@ -7,7 +7,7 @@ import v.ast
 import v.table
 import v.util
 
-fn (mut g Gen) gen_fn_decl(it ast.FnDecl) {
+fn (mut g Gen) gen_fn_decl(it ast.FnDecl, skip bool) {
 	if it.language == .c {
 		// || it.no_body {
 		return
@@ -15,12 +15,6 @@ fn (mut g Gen) gen_fn_decl(it ast.FnDecl) {
 	// if g.fileis('vweb.v') {
 	// println('\ngen_fn_decl() $it.name $it.is_generic $g.cur_generic_type')
 	// }
-	former_cur_fn := g.cur_fn
-	g.cur_fn = &it
-	defer {
-		g.cur_fn = former_cur_fn
-	}
-	is_main := it.name == 'main'
 	if it.is_generic && g.cur_generic_type == 0 { // need the cur_generic_type check to avoid inf. recursion
 		// loop thru each generic type and generate a function
 		for gen_type in g.table.fn_gen_types[it.name] {
@@ -29,14 +23,12 @@ fn (mut g Gen) gen_fn_decl(it ast.FnDecl) {
 				println('gen fn `$it.name` for type `$sym.name`')
 			}
 			g.cur_generic_type = gen_type
-			g.gen_fn_decl(it)
+			g.gen_fn_decl(it, skip)
 		}
 		g.cur_generic_type = 0
 		return
 	}
-	if is_main && g.pref.is_liveshared {
-		return
-	}
+	// g.cur_fn = it
 	fn_start_pos := g.out.len
 	msvc_attrs := g.write_fn_attrs()
 	// Live
@@ -49,164 +41,115 @@ fn (mut g Gen) gen_fn_decl(it ast.FnDecl) {
 		eprintln('INFO: compile with `v -live $g.pref.path `, if you want to use the [live] function $it.name .')
 	}
 	//
-	if is_main {
-		if g.pref.os == .windows {
-			if g.is_gui_app() {
-				// GUI application
-				g.writeln('int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev_instance, LPWSTR cmd_line, int show_cmd){')
-				g.last_fn_c_name = 'wWinMain'
-			} else {
-				// Console application
-				g.writeln('int wmain(int ___argc, wchar_t* ___argv[], wchar_t* ___envp[]){')
-				g.last_fn_c_name = 'wmain'
-			}
-		} else {
-			g.writeln('int main(int ___argc, char** ___argv){')
-			g.last_fn_c_name = it.name
+	mut name := it.name
+	if name[0] in [`+`, `-`, `*`, `/`, `%`] {
+		name = util.replace_op(name)
+	}
+	if it.is_method {
+		name = g.table.get_type_symbol(it.receiver.typ).name + '_' + name
+	}
+	if it.language == .c {
+		name = util.no_dots(name)
+	} else {
+		name = c_name(name)
+	}
+	mut type_name := g.typ(it.return_type)
+	if g.cur_generic_type != 0 {
+		// foo<T>() => foo_int(), foo_string() etc
+		gen_name := g.typ(g.cur_generic_type)
+		name += '_' + gen_name
+		type_name = type_name.replace('T', gen_name)
+	}
+	// if g.pref.show_cc && it.is_builtin {
+	// println(name)
+	// }
+	// type_name := g.table.Type_to_str(it.return_type)
+	// Live functions are protected by a mutex, because otherwise they
+	// can be changed by the live reload thread, *while* they are
+	// running, with unpredictable results (usually just crashing).
+	// For this purpose, the actual body of the live function,
+	// is put under a non publicly accessible function, that is prefixed
+	// with 'impl_live_' .
+	if is_livemain {
+		g.hotcode_fn_names << name
+	}
+	mut impl_fn_name := name
+	if is_live_wrap {
+		impl_fn_name = 'impl_live_$name'
+	}
+	g.last_fn_c_name = impl_fn_name
+	//
+	if is_live_wrap {
+		if is_livemain {
+			g.definitions.write('$type_name (* $impl_fn_name)(')
+			g.write('$type_name no_impl_${name}(')
+		}
+		if is_liveshared {
+			g.definitions.write('$type_name ${impl_fn_name}(')
+			g.write('$type_name ${impl_fn_name}(')
 		}
 	} else {
-		mut name := it.name
-		if name[0] in [`+`, `-`, `*`, `/`, `%`] {
-			name = util.replace_op(name)
-		}
-		if it.is_method {
-			name = g.table.get_type_symbol(it.receiver.typ).name + '_' + name
-		}
-		if it.language == .c {
-			name = name.replace('.', '__')
-		} else {
-			name = c_name(name)
-		}
-		mut type_name := g.typ(it.return_type)
-		if g.cur_generic_type != 0 {
-			// foo<T>() => foo_int(), foo_string() etc
-			gen_name := g.typ(g.cur_generic_type)
-			name += '_' + gen_name
-			type_name = type_name.replace('T', gen_name)
-		}
-		// if g.pref.show_cc && it.is_builtin {
-		// println(name)
-		// }
-		// type_name := g.table.Type_to_str(it.return_type)
-		// Live functions are protected by a mutex, because otherwise they
-		// can be changed by the live reload thread, *while* they are
-		// running, with unpredictable results (usually just crashing).
-		// For this purpose, the actual body of the live function,
-		// is put under a non publicly accessible function, that is prefixed
-		// with 'impl_live_' .
-		if is_livemain {
-			g.hotcode_fn_names << name
-		}
-		mut impl_fn_name := if is_live_wrap { 'impl_live_$name' } else { name }
-		g.last_fn_c_name = impl_fn_name
-		//
-		if is_live_wrap {
-			if is_livemain {
-				g.definitions.write('$type_name (* $impl_fn_name)(')
-				g.write('$type_name no_impl_${name}(')
-			}
-			if is_liveshared {
-				g.definitions.write('$type_name ${impl_fn_name}(')
-				g.write('$type_name ${impl_fn_name}(')
-			}
-		} else {
-			if !(it.is_pub || g.pref.is_debug) {
+		if !(it.is_pub || g.pref.is_debug) {
+			// Private functions need to marked as static so that they are not exportable in the
+			// binaries
+			if g.pref.build_mode != .build_module {
+				// if !(g.pref.build_mode == .build_module && g.is_builtin_mod) {
+				// If we are building vlib/builtin, we need all private functions like array_get
+				// to be public, so that all V programs can access them.
 				g.write('static ')
 				g.definitions.write('static ')
 			}
-			fn_header := if msvc_attrs.len > 0 { '$type_name $msvc_attrs ${name}(' } else { '$type_name ${name}(' }
-			g.definitions.write(fn_header)
-			g.write(fn_header)
 		}
-		fargs, fargtypes := g.fn_args(it.args, it.is_variadic)
-		if it.no_body || (g.pref.use_cache && it.is_builtin) {
-			// Just a function header. Builtin function bodies are defined in builtin.o
-			g.definitions.writeln(');')
-			g.writeln(');')
-			return
-		}
-		g.definitions.writeln(');')
-		g.writeln(') {')
-		if is_live_wrap {
-			// The live function just calls its implementation dual, while ensuring
-			// that the call is wrapped by the mutex lock & unlock calls.
-			// Adding the mutex lock/unlock inside the body of the implementation
-			// function is not reliable, because the implementation function can do
-			// an early exit, which will leave the mutex locked.
-			mut fn_args_list := []string{}
-			for ia, fa in fargs {
-				fn_args_list << '${fargtypes[ia]} $fa'
-			}
-			mut live_fncall := '${impl_fn_name}(' + fargs.join(', ') + ');'
-			mut live_fnreturn := ''
-			if type_name != 'void' {
-				live_fncall = '$type_name res = $live_fncall'
-				live_fnreturn = 'return res;'
-			}
-			g.definitions.writeln('$type_name ${name}(' + fn_args_list.join(', ') +
-				');')
-			g.hotcode_definitions.writeln('$type_name ${name}(' + fn_args_list.join(', ') +
-				'){')
-			g.hotcode_definitions.writeln('  pthread_mutex_lock(&live_fn_mutex);')
-			g.hotcode_definitions.writeln('  $live_fncall')
-			g.hotcode_definitions.writeln('  pthread_mutex_unlock(&live_fn_mutex);')
-			g.hotcode_definitions.writeln('  $live_fnreturn')
-			g.hotcode_definitions.writeln('}')
-		}
+		fn_header := if msvc_attrs.len > 0 { '$type_name $msvc_attrs ${name}(' } else { '$type_name ${name}(' }
+		g.definitions.write(fn_header)
+		g.write(fn_header)
 	}
-	if is_main {
-		if g.pref.os == .windows && g.is_gui_app() {
-			g.writeln('\ttypedef LPWSTR*(WINAPI *cmd_line_to_argv)(LPCWSTR, int*);')
-			g.writeln('\tHMODULE shell32_module = LoadLibrary(L"shell32.dll");')
-			g.writeln('\tcmd_line_to_argv CommandLineToArgvW = (cmd_line_to_argv)GetProcAddress(shell32_module, "CommandLineToArgvW");')
-			g.writeln('\tint ___argc;')
-			g.writeln('\twchar_t** ___argv = CommandLineToArgvW(cmd_line, &___argc);')
-		}
-		g.writeln('\t_vinit();')
-		if g.is_importing_os() {
-			if g.autofree {
-				g.writeln('free(_const_os__args.data); // empty, inited in _vinit()')
-			}
-			if g.pref.os == .windows {
-				g.writeln('\t_const_os__args = os__init_os_args_wide(___argc, ___argv);')
-			}
-			//
-			else {
-				g.writeln('\t_const_os__args = os__init_os_args(___argc, (byteptr*)___argv);')
-			}
-		}
+	fargs, fargtypes := g.fn_args(it.args, it.is_variadic)
+	if it.no_body || (g.pref.use_cache && it.is_builtin) || skip {
+		// Just a function header. Builtin function bodies are defined in builtin.o
+		g.definitions.writeln(');') // // NO BODY')
+		g.writeln(');')
+		return
 	}
-	if g.pref.is_livemain && is_main {
-		g.generate_hotcode_reloading_main_caller()
+	g.definitions.writeln(');')
+	g.writeln(') {')
+	if is_live_wrap {
+		// The live function just calls its implementation dual, while ensuring
+		// that the call is wrapped by the mutex lock & unlock calls.
+		// Adding the mutex lock/unlock inside the body of the implementation
+		// function is not reliable, because the implementation function can do
+		// an early exit, which will leave the mutex locked.
+		mut fn_args_list := []string{}
+		for ia, fa in fargs {
+			fn_args_list << '${fargtypes[ia]} $fa'
+		}
+		mut live_fncall := '${impl_fn_name}(' + fargs.join(', ') + ');'
+		mut live_fnreturn := ''
+		if type_name != 'void' {
+			live_fncall = '$type_name res = $live_fncall'
+			live_fnreturn = 'return res;'
+		}
+		g.definitions.writeln('$type_name ${name}(' + fn_args_list.join(', ') + ');')
+		g.hotcode_definitions.writeln('$type_name ${name}(' + fn_args_list.join(', ') + '){')
+		g.hotcode_definitions.writeln('  pthread_mutex_lock(&live_fn_mutex);')
+		g.hotcode_definitions.writeln('  $live_fncall')
+		g.hotcode_definitions.writeln('  pthread_mutex_unlock(&live_fn_mutex);')
+		g.hotcode_definitions.writeln('  $live_fnreturn')
+		g.hotcode_definitions.writeln('}')
 	}
 	// Profiling mode? Start counting at the beginning of the function (save current time).
 	if g.pref.is_prof {
-		g.profile_fn(it.name, is_main)
-	}
-	if is_main {
-		g.indent++
+		g.profile_fn(it.name)
 	}
 	g.stmts(it.stmts)
-	if is_main {
-		g.indent--
+	//
+	if it.return_type == table.void_type {
+		g.write_defer_stmts_when_needed()
 	}
-	// ////////////
-	if is_main {
-		if g.autofree {
-			g.writeln('\t_vcleanup();')
-		}
-		if g.is_test {
-			verror('test files cannot have function `main`')
-		}
-	}
-	g.write_defer_stmts_when_needed()
-	// /////////
-	if g.autofree {
+	//
+	if g.autofree && !g.pref.experimental {
 		// TODO: remove this, when g.write_autofree_stmts_when_needed works properly
-		g.writeln(g.autofree_scope_vars(it.body_pos.pos))
-	}
-	if is_main {
-		g.writeln('\treturn 0;')
+		g.autofree_scope_vars(it.body_pos.pos)
 	}
 	g.writeln('}')
 	g.defer_stmts = []
@@ -220,12 +163,9 @@ fn (mut g Gen) write_autofree_stmts_when_needed(r ast.Return) {
 	// TODO: write_autofree_stmts_when_needed should not free the returned variables.
 	// It may require rewriting g.return_statement to assign the expressions
 	// to temporary variables, then protecting *them* from autofreeing ...
-	/*
-	g.writeln('/* autofreeings before return:              -------')
-	//g.write( g.autofree_scope_vars(r.pos.pos) )
-	g.write( g.autofree_scope_vars(g.fn_decl.body_pos.pos) )
-	g.writeln('--------------------------------------------------- */')
-	*/
+	// g.writeln('// autofreeings before return:              -------')
+	// g.writeln(g.autofree_scope_vars(g.fn_decl.body_pos.pos))
+	// g.writeln('//--------------------------------------------------- ') // //g.write( g.autofree_scope_vars(r.pos.pos) )
 }
 
 fn (mut g Gen) write_defer_stmts_when_needed() {
@@ -249,7 +189,7 @@ fn (mut g Gen) fn_args(args []table.Arg, is_variadic bool) ([]string, []string) 
 		caname := c_name(arg.name)
 		typ := g.unwrap_generic(arg.typ)
 		arg_type_sym := g.table.get_type_symbol(typ)
-		mut arg_type_name := g.typ(typ) // arg_type_sym.name.replace('.', '__')
+		mut arg_type_name := g.typ(typ) // util.no_dots(arg_type_sym.name)
 		// if arg.name == 'xxx' {
 		// println('xxx arg type= ' + arg_type_name)
 		// }
@@ -310,11 +250,21 @@ fn (mut g Gen) fn_args(args []table.Arg, is_variadic bool) ([]string, []string) 
 }
 
 fn (mut g Gen) call_expr(node ast.CallExpr) {
+	// NOTE: everything could be done this way
+	// see my comment in parser near anon_fn
+	if node.left is ast.AnonFn {
+		g.expr(node.left)
+	}
 	if node.should_be_skipped {
 		return
 	}
+	g.inside_call = true
+	defer {
+		g.inside_call = false
+	}
 	gen_or := node.or_block.kind != .absent
-	cur_line := if gen_or && g.is_assign_rhs {
+	is_gen_or_and_assign_rhs := gen_or && g.is_assign_rhs
+	cur_line := if is_gen_or_and_assign_rhs {
 		line := g.go_before_stmt(0)
 		g.out.write(tabs[g.indent])
 		line
@@ -326,21 +276,30 @@ fn (mut g Gen) call_expr(node ast.CallExpr) {
 		styp := g.typ(node.return_type.set_flag(.optional))
 		g.write('$styp $tmp_opt = ')
 	}
-	if node.is_method {
-		g.method_call(node)
+	if node.is_method && !node.is_field {
+		if node.name == 'writeln' && g.pref.experimental &&
+			node.args.len > 0 && node.args[0].expr is ast.StringInterLiteral &&
+			g.table.get_type_symbol(node.receiver_type).name == 'strings.Builder' {
+			g.string_inter_literal_sb_optimized(node)
+		} else {
+			g.method_call(node)
+		}
 	} else {
 		g.fn_call(node)
 	}
 	if gen_or {
 		g.or_block(tmp_opt, node.or_block, node.return_type)
-		g.write('\n\t$cur_line$tmp_opt')
+		if is_gen_or_and_assign_rhs {
+			g.write('\n$cur_line$tmp_opt')
+		}
 	}
 }
 
+[inline]
 pub fn (g &Gen) unwrap_generic(typ table.Type) table.Type {
-	if typ.idx() == table.t_type_idx {
+	if typ.has_flag(.generic) {
 		// return g.cur_generic_type
-		return g.cur_generic_type.derive(typ)
+		return g.cur_generic_type.derive(typ).clear_flag(.generic)
 	}
 	return typ
 }
@@ -353,7 +312,7 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 	// mut receiver_type_name := g.cc_type(node.receiver_type)
 	// mut receiver_type_name := g.typ(node.receiver_type)
 	typ_sym := g.table.get_type_symbol(g.unwrap_generic(node.receiver_type))
-	mut receiver_type_name := typ_sym.name.replace('.', '__')
+	mut receiver_type_name := util.no_dots(typ_sym.name)
 	if typ_sym.kind == .interface_ {
 		// Speaker_name_table[s._interface_idx].speak(s._object)
 		g.write('${c_name(receiver_type_name)}_name_table[')
@@ -399,18 +358,18 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 		g.gen_str_for_type_with_styp(node.receiver_type, styp)
 	}
 	// TODO performance, detect `array` method differently
-	if left_sym.kind == .array &&
-		node.name in ['repeat', 'sort_with_compare', 'free', 'push_many', 'trim', 'first', 'last', 'clone', 'reverse', 'slice'] {
+	if left_sym.kind == .array && node.name in
+		['repeat', 'sort_with_compare', 'free', 'push_many', 'trim', 'first', 'last', 'pop', 'clone', 'reverse', 'slice'] {
 		// && rec_sym.name == 'array' {
 		// && rec_sym.name == 'array' && receiver_name.starts_with('array') {
 		// `array_byte_clone` => `array_clone`
 		receiver_type_name = 'array'
-		if node.name in ['last', 'first'] {
+		if node.name in ['last', 'first', 'pop'] {
 			return_type_str := g.typ(node.return_type)
 			g.write('*($return_type_str*)')
 		}
 	}
-	mut name := '${receiver_type_name}_$node.name'.replace('.', '__')
+	mut name := util.no_dots('${receiver_type_name}_$node.name')
 	// Check if expression is: arr[a..b].clone(), arr[a..].clone()
 	// if so, then instead of calling array_clone(&array_slice(...))
 	// call array_clone_static(array_slice(...))
@@ -421,7 +380,7 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 			if idx is ast.RangeExpr {
 				// expr is arr[range].clone()
 				// use array_clone_static instead of array_clone
-				name = '${receiver_type_name}_${node.name}_static'.replace('.', '__')
+				name = util.no_dots('${receiver_type_name}_${node.name}_static')
 				is_range_slice = true
 			}
 		}
@@ -504,13 +463,13 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 	if node.language == .c {
 		// Skip "C."
 		g.is_c_call = true
-		name = name[2..].replace('.', '__')
+		name = util.no_dots(name[2..])
 	} else {
 		name = c_name(name)
 	}
 	if is_json_encode {
 		// `json__encode` => `json__encode_User`
-		name += '_' + json_type_str.replace('.', '__')
+		name += '_' + util.no_dots(json_type_str)
 	}
 	if node.generic_type != table.void_type && node.generic_type != 0 {
 		// `foo<int>()` => `foo_int()`
@@ -579,10 +538,6 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 					g.write('*')
 				}
 				g.expr(expr)
-				if !typ.has_flag(.variadic) && sym.kind == .struct_ &&
-					styp != 'ptr' && !sym.has_method('str') {
-					g.write(', 0') // trailing 0 is initial struct indent count
-				}
 			}
 			g.write('))')
 		}
@@ -682,16 +637,24 @@ fn (mut g Gen) ref_or_deref_arg(arg ast.CallArg, expected_type table.Type) {
 	} else if arg_is_ptr && !expr_is_ptr {
 		if arg.is_mut {
 			if exp_sym.kind == .array {
-				// Special case for mutable arrays. We can't `&` function
-				// results,	have to use `(array[]){ expr }[0]` hack.
-				g.write('&/*111*/(array[]){')
-				g.expr(arg.expr)
-				g.write('}[0]')
+				if arg.expr is ast.Ident && (arg.expr as ast.Ident).kind == .variable {
+					g.write('&/*arr*/')
+					g.expr(arg.expr)
+				} else {
+					// Special case for mutable arrays. We can't `&` function
+					// results,	have to use `(array[]){ expr }[0]` hack.
+					g.write('&/*111*/(array[]){')
+					g.expr(arg.expr)
+					g.write('}[0]')
+				}
 				return
 			}
 		}
 		if !g.is_json_fn {
-			g.write('(voidptr)&/*qq*/')
+			arg_typ_sym := g.table.get_type_symbol(arg.typ)
+			if arg_typ_sym.kind != .function {
+				g.write('(voidptr)&/*qq*/')
+			}
 		}
 	}
 	g.expr_with_cast(arg.expr, arg.typ, expected_type)

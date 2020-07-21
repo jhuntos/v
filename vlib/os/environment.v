@@ -3,7 +3,7 @@
 // that can be found in the LICENSE file.
 module os
 
-fn C.getenv(byteptr) &char
+fn C.getenv(charptr) &char
 // C.GetEnvironmentStringsW & C.FreeEnvironmentStringsW are defined only on windows
 fn C.GetEnvironmentStringsW() &u16
 
@@ -18,7 +18,7 @@ pub fn getenv(key string) string {
 		}
 		return string_from_wide(s)
 	} $else {
-		s := C.getenv(key.str)
+		s := C.getenv(charptr(key.str))
 		if s == voidptr(0) {
 			return ''
 		}
@@ -32,11 +32,15 @@ pub fn setenv(name string, value string, overwrite bool) int {
 	$if windows {
 		format := '$name=$value'
 		if overwrite {
-			return C._putenv(format.str)
+			unsafe {
+				return C._putenv(format.str)
+			}
 		}
 		return -1
 	} $else {
-		return C.setenv(name.str, value.str, overwrite)
+		unsafe {
+			return C.setenv(charptr(name.str), charptr(value.str), overwrite)
+		}
 	}
 }
 
@@ -46,7 +50,7 @@ pub fn unsetenv(name string) int {
 		format := '${name}='
 		return C._putenv(format.str)
 	} $else {
-		return C.unsetenv(name.str)
+		return C.unsetenv(charptr(name.str))
 	}
 }
 
@@ -58,18 +62,22 @@ pub fn environ() map[string]string {
 	$if windows {
 		mut estrings := C.GetEnvironmentStringsW()
 		mut eline := ''
-		for c := estrings; *c != 0; c = c + eline.len + 1 {
+		for c := estrings; *c != 0; {
 			eline = string_from_wide(c)
 			eq_index := eline.index_byte(`=`)
 			if eq_index > 0 {
 				res[eline[0..eq_index]] = eline[eq_index + 1..]
+			}
+			unsafe 
+			{
+				c = c + eline.len + 1
 			}
 		}
 		C.FreeEnvironmentStringsW(estrings)
 	} $else {
 		e := &charptr(C.environ)
 		for i := 0; !isnil(e[i]); i++ {
-			eline := cstring_to_vstring(e[i])
+			eline := cstring_to_vstring(byteptr(e[i]))
 			eq_index := eline.index_byte(`=`)
 			if eq_index > 0 {
 				res[eline[0..eq_index]] = eline[eq_index + 1..]

@@ -2,66 +2,66 @@ module main
 
 import vweb
 import time
-import pg
+import sqlite
 import json
 
-pub struct App {
-mut:
+struct App {
+pub mut:
 	vweb vweb.Context
-	db pg.DB
+	db   sqlite.DB
 }
 
 fn main() {
-	vweb.run<App>(8080)
-}
-
-fn (mut app App) index_text() {
-	app.vweb.text('Hello, world from vweb!')
+	vweb.run<App>(8081)
 }
 
 /*
-fn (app &App) index_html() {
-	message := 'Hello, world from vweb!'
-	$vweb.html()
+pub fn (mut app App) index_text() vweb.Result {
+	app.vweb.text('Hello, world from vweb!')
+	return vweb.Result{}
+}
+
+pub fn (app &App) index_html() vweb.Result {
+	message := 'Hello, world from Vweb!'
+	return $vweb.html()
 }
 */
 
-fn (app &App) index() {
+pub fn (app &App) index() vweb.Result {
 	articles := app.find_all_articles()
-	$vweb.html()
+	return $vweb.html()
 }
 
-pub fn (mut app App) init() {
-	db := pg.connect(pg.Config{
-		host:   '127.0.0.1'
-		dbname: 'blog'
-		user:   'alex'
-	}) or { panic(err) }
+pub fn (mut app App) init_once() {
+	db := sqlite.connect('blog.db') or {
+		panic(err)
+	}
 	app.db = db
 }
 
-pub fn (mut app App) new() {
-	$vweb.html()
+pub fn (mut app App) init() {
 }
 
-pub fn (mut app App) reset() {
+pub fn (mut app App) new() vweb.Result {
+	return $vweb.html()
 }
 
-pub fn (mut app App) new_article() {
+pub fn (mut app App) new_article() vweb.Result {
 	title := app.vweb.form['title']
 	text := app.vweb.form['text']
-	if title == '' || text == ''  {
-		app.vweb.text('Empty text/titile')
-		return
+	if title == '' || text == '' {
+		app.vweb.text('Empty text/title')
+		return vweb.Result{}
 	}
-	article := Article{
+	article := Article {
 		title: title
 		text: text
 	}
 	println(article)
-	db := app.db
-	db.insert(article)
-	app.vweb.redirect('/article/')
+	sql app.db {
+		insert article into Article
+	}
+	return app.vweb.redirect('/')
 }
 
 pub fn (mut app App) articles() {

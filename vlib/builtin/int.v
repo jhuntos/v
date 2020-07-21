@@ -72,13 +72,17 @@ pub fn (nn int) str_l(max int) string {
 	}
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		n1 := n / 100
 		d = ((n - (n1 * 100)) << 1)
 		n = n1
-		buf[index--] = digit_pairs.str[d++]
-		buf[index--] = digit_pairs.str[d]
+		unsafe {
+			buf[index--] = digit_pairs.str[d++]
+			buf[index--] = digit_pairs.str[d]
+		}
 	}
 	index++
 
@@ -90,11 +94,15 @@ pub fn (nn int) str_l(max int) string {
 	// Prepend - if it's negative
 	if is_neg {
 		index--
-		buf[index] = `-`
+		unsafe {
+			buf[index] = `-`
+		}
 	}
 
-	C.memmove(buf,buf+index, (max-index)+1 )
-	return tos(buf, (max-index))
+	unsafe {
+		C.memmove(buf,buf+index, (max-index)+1 )
+		return tos(buf, (max-index))
+	}
 	//return tos(buf + index, (max-index))
 }
 
@@ -124,13 +132,17 @@ pub fn (nn u32) str() string {
 	mut buf := malloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		n1 := n / u32(100)
 		d = ((n - (n1 * u32(100))) << u32(1))
 		n = n1
-		buf[index--] = digit_pairs[d++]
-		buf[index--] = digit_pairs[d]
+		unsafe {
+			buf[index--] = digit_pairs[d++]
+			buf[index--] = digit_pairs[d]
+		}
 	}
 	index++
 
@@ -139,8 +151,10 @@ pub fn (nn u32) str() string {
 		index++
 	}
 
-	C.memmove(buf,buf+index, (max-index)+1 )
-	return tos(buf, (max-index))
+	unsafe {
+		C.memmove(buf,buf+index, (max-index)+1 )
+		return tos(buf, (max-index))
+	}
 	//return tos(buf + index, (max-index))
 }
 
@@ -165,13 +179,17 @@ pub fn (nn i64) str() string {
 	}
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		n1 := n / i64(100)
 		d = ((n - (n1 * i64(100))) << i64(1))
 		n = n1
-		buf[index--] = digit_pairs[d++]
-		buf[index--] = digit_pairs[d]
+		unsafe {
+			buf[index--] = digit_pairs[d++]
+			buf[index--] = digit_pairs[d]
+		}
 	}
 	index++
 
@@ -183,11 +201,15 @@ pub fn (nn i64) str() string {
 	// Prepend - if it's negative
 	if is_neg {
 		index--
-		buf[index] = `-`
+		unsafe {
+			buf[index] = `-`
+		}
 	}
 
-	C.memmove(buf,buf+index, (max-index)+1 )
-	return tos(buf, (max-index))
+	unsafe {
+		C.memmove(buf,buf+index, (max-index)+1 )
+		return tos(buf, (max-index))
+	}
 	//return tos(buf + index, (max-index))
 }
 
@@ -201,13 +223,17 @@ pub fn (nn u64) str() string {
 	mut buf := vcalloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		n1 := n / 100
 		d = ((n - (n1 * 100)) << 1)
 		n = n1
-		buf[index--] = digit_pairs[d++]
-		buf[index--] = digit_pairs[d]
+		unsafe {
+			buf[index--] = digit_pairs[d++]
+			buf[index--] = digit_pairs[d]
+		}
 	}
 	index++
 
@@ -216,8 +242,10 @@ pub fn (nn u64) str() string {
 		index++
 	}
 
-	C.memmove(buf,buf+index, (max-index)+1 )
-	return tos(buf, (max-index))
+	unsafe {
+		C.memmove(buf,buf+index, (max-index)+1 )
+		return tos(buf, (max-index))
+	}
 	//return tos(buf + index, (max-index))
 }
 
@@ -250,17 +278,23 @@ pub fn (nn byte) hex() string {
 	mut buf := malloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		d := n & 0xF
 		n = n >> 4
-		buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		unsafe {
+			buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		}
 	}
 	//buf[index--] = `x`
 	//buf[index]   = `0`
 	index++
 
-	return tos(buf + index, (max - index))
+	unsafe {
+		return tos(buf + index, (max - index))
+	}
 }
 
 pub fn (nn i8) hex() string {
@@ -277,17 +311,23 @@ pub fn (nn u16) hex() string {
 	mut buf := malloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		d := byte(n & 0xF)
 		n = n >> 4
-		buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		unsafe {
+			buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		}
 	}
 	//buf[index--] = `x`
 	//buf[index]   = `0`
 	index++
 
-	return tos(buf + index, (max - index))
+	unsafe {
+		return tos(buf + index, (max - index))
+	}
 }
 
 pub fn (nn i16) hex() string {
@@ -304,17 +344,23 @@ pub fn (nn u32) hex() string {
 	mut buf := malloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		d := byte(n & 0xF)
 		n = n >> 4
-		buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		unsafe {
+			buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		}
 	}
 	//buf[index--] = `x`
 	//buf[index]   = `0`
 	index++
 
-	return tos(buf + index, (max - index))
+	unsafe {
+		return tos(buf + index, (max - index))
+	}
 }
 
 pub fn (nn int) hex() string {
@@ -335,18 +381,24 @@ pub fn (nn u64) hex() string {
 	mut buf := malloc(max + 1)
 
 	mut index := max
-	buf[index--] = `\0`
+	unsafe {
+		buf[index--] = `\0`
+	}
 	for n > 0 {
 		d := byte(n & 0xF)
 		n = n >> 4
-		buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		unsafe {
+			buf[index--] = if d < 10 { d + `0` } else { d + 87 }
+		}
 	}
 	//buf[index--] = `x`
 	//buf[index]   = `0`
 	index++
 
-	C.memmove(buf,buf+index, (max-index)+1 )
-	return tos(buf, (max-index))
+	unsafe {
+		C.memmove(buf,buf+index, (max-index)+1 )
+		return tos(buf, (max-index))
+	}
 	//return tos(buf + index, (max-index))
 }
 
@@ -389,8 +441,10 @@ pub fn (c byte) str() string {
 		str: malloc(2)
 		len: 1
 	}
-	str.str[0] = c
-	str.str[1] = `\0`
+	unsafe {
+		str.str[0] = c
+		str.str[1] = `\0`
+	}
 	return str
 }
 
@@ -399,7 +453,7 @@ pub fn (c byte) is_capital() bool {
 }
 
 pub fn (b []byte) clone() []byte {
-	mut res := [byte(0)].repeat(b.len)
+	mut res := []byte{len: b.len}
 	//mut res := make([]byte, {repeat:b.len})
 	for i in 0..b.len {
 		res[i] = b[i]

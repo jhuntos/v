@@ -12,7 +12,7 @@ const (
 	os_names     = ['linux', 'macos', 'windows']
 	skip_modules = [
 		'builtin.bare', 'builtin.js',
-		'strconv', 'strconv.ftoa', 'hash.wyhash', 'strings',
+		'strconv', 'strconv.ftoa', 'hash', 'strings',
 		'crypto.rand',
 		'os.bare', 'os2',
 		'picohttpparser', 'picoev',
@@ -98,10 +98,9 @@ fn (app App) gen_api_for_module_in_os(mod_name, os_name string) string {
 	for f in b.parsed_files {
 		for s in f.stmts {
 			if s is ast.FnDecl {
-				fnd := s as ast.FnDecl
-				if fnd.is_pub {
-					fn_signature := fnd.str(b.table)
-					fn_mod := fnd.modname()
+				if s.is_pub {
+					fn_signature := s.stringify(b.table, mod_name)
+					fn_mod := s.modname()
 					if fn_mod == mod_name {
 						fline := '${fn_mod}: $fn_signature'
 						res << fline

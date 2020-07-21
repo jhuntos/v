@@ -24,7 +24,7 @@
 ## Key Features of V
 
 - Simplicity: the language can be learned in less than an hour
-- Fast compilation: ≈100k — 1.2 million loc/s
+- Fast compilation: ≈80k loc/s with a Clang backend, ≈1 million loc/s with x64 and tcc backends *(Intel i5-7500, SSD, no optimization)*
 - Easy to develop: V compiles itself in less than a second
 - Performance: within 3% of C
 - Safety: no null, no globals, no undefined behavior, immutability by default
@@ -37,7 +37,24 @@
 - Built-in ORM
 - C and JavaScript backends
 
-A stable 0.2 release is planned for June 2020. Right now V is in an alpha stage.
+## Stability guarantee and future changes
+
+Despite being at an early development stage, the V language is relatively stable and has
+backwards compatibility guarantee, meaning that the code you write today is guaranteed
+to work a month, a year, or five years from now.
+
+There still may be minor syntax changes before the 1.0 release, but they will be handled
+automatically via `vfmt`, as has been done in the past.
+
+The V core APIs (primarily the `os` module) will still have minor changes until
+they are stabilized in 2020. Of course the APIs will grow after that, but without breaking
+existing code.
+
+Unlike many other languages, V is not going to be always changing, with new features
+being introduced and old features modified. It is always going to be a small and simple 
+language, very similar to the way it is right now.
+
+
 
 ## Installing V from source
 
@@ -64,13 +81,15 @@ v up
 
 ### C compiler
 
-You'll need Clang or GCC or Visual Studio. If you are doing development, you most likely already have one of those installed.
+It's recommended to use Clang or GCC or Visual Studio. If you are doing development, you most likely already have one of those installed.
 
 Otherwise, follow these instructions:
 
 - [Installing a C compiler on Linux and macOS](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Linux-and-macOS)
 
 - [Installing a C compiler on Windows](https://github.com/vlang/v/wiki/Installing-a-C-compiler-on-Windows)
+
+However, if none is found when running `make` on Linux or Windows, TCC would be downloaded and set as an alternative C backend. It's very lightweight (several MB) so this shouldn't take too long.
 
 ### Symlinking
 
@@ -129,7 +148,7 @@ docker run --rm -it vlang:latest
 Make sure V can compile itself:
 
 ```
-v -o v2 cmd/v
+v self
 ```
 
 ```bash
@@ -201,6 +220,16 @@ Hello from V.js
 Hello from V.js
 ```
 -->
+
+## Developing web applications
+
+Check out the [Building a simple web blog](https://github.com/vlang/v/blob/master/tutorials/building-a-simple-web-blog-with-vweb.md)
+tutorial and Gitly, a light and fast alternative to GitHub/GitLab:
+
+https://github.com/vlang/gitly
+
+<img src="https://user-images.githubusercontent.com/687996/85933714-b195fe80-b8da-11ea-9ddd-09cadc2103e4.png">
+
 
 ## Troubleshooting
 

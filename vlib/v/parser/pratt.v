@@ -8,14 +8,21 @@ import v.table
 import v.token
 
 pub fn (mut p Parser) expr(precedence int) ast.Expr {
+	$if trace_parser ? {
+		tok_pos := p.tok.position()
+		eprintln('parsing file: ${p.file_name:-30} | tok.kind: ${p.tok.kind:-10} | tok.lit: ${p.tok.lit:-10} | tok_pos: ${tok_pos.str():-45} | expr($precedence)')
+	}
 	// println('\n\nparser.expr()')
 	mut typ := table.void_type
 	mut node := ast.Expr{}
 	is_stmt_ident := p.is_stmt_ident
 	p.is_stmt_ident = false
+	if !p.pref.is_fmt {
+		p.eat_comments()
+	}
 	// Prefix
 	match p.tok.kind {
-		.key_mut, .key_static {
+		.key_mut, .key_shared, .key_atomic, .key_static {
 			node = p.name_expr()
 			p.is_stmt_ident = is_stmt_ident
 		}
@@ -31,6 +38,9 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 		}
 		.string {
 			node = p.string_expr()
+		}
+		.comment {
+			node = p.comment()
 		}
 		.dot {
 			// .enum_val
@@ -78,6 +88,21 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 		.key_if {
 			node = p.if_expr()
 		}
+		.key_unsafe {
+			p.next()
+			pos := p.tok.position()
+			assert !p.inside_unsafe
+			p.inside_unsafe = true
+			stmts := p.parse_block()
+			p.inside_unsafe = false
+			node = ast.UnsafeExpr{
+				stmts: stmts
+				pos: pos
+			}
+		}
+		.key_lock, .key_rlock {
+			node = p.lock_expr()
+		}
 		.lsbr {
 			if p.expecting_type {
 				// parse json.decode type (`json.decode([]User, s)`)
@@ -94,19 +119,27 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			}
 		}
 		.key_sizeof {
+			pos := p.tok.position()
 			p.next() // sizeof
 			p.check(.lpar)
-			sizeof_type := p.parse_type()
-			if p.tok.lit == 'C' {
-				p.next()
-				p.check(.dot)
+			is_known_var := p.mark_var_as_used(p.tok.lit)
+			if is_known_var {
+				expr := p.parse_ident(table.Language.v)
 				node = ast.SizeOf{
-					type_name: p.check_name()
-					typ: sizeof_type
+					is_type: false
+					expr: expr
+					pos: pos
 				}
 			} else {
+				save_expr_mod := p.expr_mod
+				p.expr_mod = ''
+				sizeof_type := p.parse_type()
+				p.expr_mod = save_expr_mod
 				node = ast.SizeOf{
+					is_type: true
 					typ: sizeof_type
+					type_name: p.table.get_type_symbol(sizeof_type).name
+					pos: pos
 				}
 			}
 			p.check(.rpar)
@@ -157,12 +190,25 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 		.key_fn {
 			// Anonymous function
 			node = p.anon_fn()
+			// its a call
+			// NOTE: this could be moved to just before the pratt loop
+			// then anything can be a call, eg. `index[2]()` or `struct.field()`
+			// but this would take a bit of modification
+			if p.tok.kind == .lpar {
+				p.next()
+				pos := p.tok.position()
+				args := p.call_args()
+				p.check(.rpar)
+				node = ast.CallExpr{
+					name: 'anon'
+					left: node
+					args: args
+					pos: pos
+				}
+			}
 			return node
 		}
 		else {
-			if p.tok.kind == .comment {
-				println(p.tok.lit)
-			}
 			p.error('expr(): bad token `$p.tok.kind.str()`')
 		}
 	}
@@ -202,12 +248,17 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			}
 		} else if p.tok.kind.is_infix() {
 			// return early for deref assign `*x = 2` goes to prefix expr
-			if p.tok.kind == .mul && p.tok.line_nr != p.prev_tok.line_nr && p.peek_tok2.kind ==
-				.assign {
+			if p.tok.kind == .mul &&
+				p.tok.line_nr != p.prev_tok.line_nr &&
+				p.peek_tok2.kind == .assign {
 				return node
 			}
 			// continue on infix expr
 			node = p.infix_expr(node)
+			// return early `if bar is SumType as b {`
+			if p.tok.kind == .key_as && p.inside_if {
+				return node
+			}
 		} else if p.tok.kind in [.inc, .dec] {
 			// Postfix
 			node = ast.PostfixExpr{
@@ -236,6 +287,10 @@ fn (mut p Parser) infix_expr(left ast.Expr) ast.Expr {
 		p.expecting_type = true
 	}
 	right = p.expr(precedence)
+	if p.pref.is_vet && op in [.key_in, .not_in] &&
+		right is ast.ArrayInit && (right as ast.ArrayInit).exprs.len == 1 {
+		p.vet_error('Use `var == value` instead of `var in [value]`', pos.line_nr)
+	}
 	return ast.InfixExpr{
 		left: left
 		right: right
@@ -254,12 +309,7 @@ fn (mut p Parser) prefix_expr() ast.PrefixExpr {
 	// p.warn('unsafe')
 	// }
 	p.next()
-	mut right := ast.Expr{}
-	if op == .minus {
-		right = p.expr(token.Precedence.call)
-	} else {
-		right = p.expr(token.Precedence.prefix)
-	}
+	right := if op == .minus { p.expr(token.Precedence.call) } else { p.expr(token.Precedence.prefix) }
 	p.is_amp = false
 	return ast.PrefixExpr{
 		op: op

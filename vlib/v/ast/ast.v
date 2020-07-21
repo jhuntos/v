@@ -10,12 +10,12 @@ import v.errors
 pub type TypeDecl = AliasTypeDecl | FnTypeDecl | SumTypeDecl
 
 pub type Expr = AnonFn | ArrayInit | AsCast | Assoc | BoolLiteral | CallExpr | CastExpr |
-	CharLiteral | ComptimeCall | ConcatExpr | EnumVal | FloatLiteral | Ident | IfExpr | IfGuardExpr |
-	IndexExpr | InfixExpr | IntegerLiteral | Likely | MapInit | MatchExpr | None | OrExpr |
-	ParExpr | PostfixExpr | PrefixExpr | RangeExpr | SelectorExpr | SizeOf | SqlExpr | StringInterLiteral |
-	StringLiteral | StructInit | Type | TypeOf
+	CharLiteral | Comment | ComptimeCall | ConcatExpr | EnumVal | FloatLiteral | Ident | IfExpr |
+	IfGuardExpr | IndexExpr | InfixExpr | IntegerLiteral | Likely | LockExpr | MapInit | MatchExpr |
+	None | OrExpr | ParExpr | PostfixExpr | PrefixExpr | RangeExpr | SelectorExpr | SizeOf |
+	SqlExpr | StringInterLiteral | StringLiteral | StructInit | Type | TypeOf | UnsafeExpr
 
-pub type Stmt = AssertStmt | AssignStmt | Attr | Block | BranchStmt | Comment | CompIf |
+pub type Stmt = AssertStmt | AssignStmt | Attr | Block | BranchStmt | CompFor | CompIf |
 	ConstDecl | DeferStmt | EnumDecl | ExprStmt | FnDecl | ForCStmt | ForInStmt | ForStmt |
 	GlobalDecl | GoStmt | GotoLabel | GotoStmt | HashStmt | Import | InterfaceDecl | Module |
 	Return | SqlStmt | StructDecl | TypeDecl | UnsafeStmt
@@ -42,11 +42,12 @@ pub:
 // Stand-alone expression in a statement list.
 pub struct ExprStmt {
 pub:
-	expr    Expr
-	pos     token.Position
-	is_expr bool
+	expr     Expr
+	pos      token.Position
+	comments []Comment
+	is_expr  bool
 pub mut:
-	typ     table.Type
+	typ      table.Type
 }
 
 pub struct IntegerLiteral {
@@ -106,7 +107,7 @@ pub:
 	field_name string
 pub mut:
 	expr_type  table.Type // type of `Foo` in `Foo.bar`
-	typ  table.Type // type of the entire thing (`Foo.bar`)
+	typ        table.Type // type of the entire thing (`Foo.bar`)
 }
 
 // module declaration
@@ -142,6 +143,7 @@ pub mut:
 
 pub struct ConstField {
 pub:
+	mod      string
 	name     string
 	expr     Expr
 	is_pub   bool
@@ -178,6 +180,7 @@ pub struct InterfaceDecl {
 pub:
 	name        string
 	field_names []string
+	is_pub      bool
 	methods     []FnDecl
 	pos         token.Position
 }
@@ -186,6 +189,7 @@ pub struct StructInitField {
 pub:
 	expr          Expr
 	pos           token.Position
+	comment       Comment
 pub mut:
 	name          string
 	typ           table.Type
@@ -207,12 +211,25 @@ pub:
 	pos   token.Position
 	mod   string
 	alias string
+pub mut:
+	syms  []ImportSymbol
+}
+
+pub enum ImportSymbolKind {
+	fn_
+	type_
+}
+
+pub struct ImportSymbol {
+pub:
+	pos    token.Position
+	name   string
+	kind   ImportSymbolKind
 }
 
 pub struct AnonFn {
 pub:
 	decl FnDecl
-	is_called bool
 pub mut:
 	typ  table.Type
 }
@@ -221,7 +238,6 @@ pub struct FnDecl {
 pub:
 	name          string
 	mod           string
-	stmts         []Stmt
 	args          []table.Arg
 	is_deprecated bool
 	is_pub        bool
@@ -231,6 +247,7 @@ pub:
 	receiver_pos  token.Position
 	is_method     bool
 	rec_mut       bool // is receiver mutable
+	rec_share     table.ShareType
 	language      table.Language
 	no_body       bool // just a definition `fn C.malloc()`
 	is_builtin    bool // this function is defined in builtin/strconv
@@ -240,6 +257,7 @@ pub:
 	file          string
 	is_generic    bool
 pub mut:
+	stmts         []Stmt
 	return_type   table.Type
 }
 
@@ -256,6 +274,7 @@ pub:
 pub mut:
 	name               string
 	is_method          bool
+	is_field           bool // temp hack, remove ASAP when re-impl CallExpr / Selector (joe)
 	args               []CallArg
 	expected_arg_types []table.Type
 	language           table.Language
@@ -269,18 +288,21 @@ pub mut:
 
 pub struct CallArg {
 pub:
-	is_mut bool
-	expr   Expr
+	is_mut   bool
+	share    table.ShareType
+	expr     Expr
+	comments []Comment
 pub mut:
-	typ    table.Type
+	typ      table.Type
 }
 
 pub struct Return {
 pub:
-	pos   token.Position
-	exprs []Expr
+	pos      token.Position
+	exprs    []Expr
+	comments []Comment
 pub mut:
-	types []table.Type
+	types    []table.Type
 }
 
 /*
@@ -300,6 +322,7 @@ pub struct Var {
 pub:
 	name       string
 	expr       Expr
+	share      table.ShareType
 	is_mut     bool
 	is_arg     bool // fn args should not be autofreed
 pub mut:
@@ -323,10 +346,10 @@ pub struct File {
 pub:
 	path         string
 	mod          Module
-	stmts        []Stmt
 	scope        &Scope
 	global_scope &Scope
 pub mut:
+	stmts        []Stmt
 	imports      []Import
 	errors       []errors.Error
 	warnings     []errors.Warning
@@ -343,6 +366,7 @@ pub mut:
 	is_mut      bool
 	is_static   bool
 	is_optional bool
+	share       table.ShareType
 }
 
 pub type IdentInfo = IdentFn | IdentVar
@@ -361,9 +385,9 @@ pub struct Ident {
 pub:
 	language table.Language
 	tok_kind token.Kind
-	mod      string
 	pos      token.Position
 pub mut:
+	mod      string
 	name     string
 	kind     IdentKind
 	info     IdentInfo
@@ -384,20 +408,23 @@ pub fn (i &Ident) var_info() IdentVar {
 
 pub struct InfixExpr {
 pub:
-	op         token.Kind
-	pos        token.Position
-	left       Expr
-	right      Expr
+	op          token.Kind
+	pos         token.Position
+	left        Expr
+	right       Expr
 pub mut:
-	left_type  table.Type
-	right_type table.Type
+	left_type   table.Type
+	right_type  table.Type
+	auto_locked string
 }
 
 pub struct PostfixExpr {
 pub:
-	op   token.Kind
-	expr Expr
-	pos  token.Position
+	op          token.Kind
+	expr        Expr
+	pos         token.Position
+pub mut:
+	auto_locked string
 }
 
 pub struct PrefixExpr {
@@ -411,7 +438,7 @@ pub struct IndexExpr {
 pub:
 	pos       token.Position
 	left      Expr
-	index     Expr // [0], [start..end] etc
+	index     Expr // [0] or RangeExpr [start..end]
 pub mut:
 	left_type table.Type // array, map, fixed array
 	is_setter bool
@@ -419,22 +446,44 @@ pub mut:
 
 pub struct IfExpr {
 pub:
-	tok_kind token.Kind
-	branches []IfBranch
-	left     Expr // `a` in `a := if ...`
-	pos      token.Position
+	tok_kind      token.Kind
+	left          Expr // `a` in `a := if ...`
+	pos           token.Position
+	post_comments []Comment
 pub mut:
-	is_expr  bool
-	typ      table.Type
-	has_else bool
+	branches      []IfBranch // includes all `else if` branches
+	is_expr       bool
+	typ           table.Type
+	has_else      bool
 }
 
 pub struct IfBranch {
 pub:
-	cond    Expr
-	stmts   []Stmt
-	pos     token.Position
-	comment Comment
+	cond         Expr
+	stmts        []Stmt
+	pos          token.Position
+	body_pos     token.Position
+	comments     []Comment
+pub mut:
+	smartcast    bool // should only be true if cond is `x is sumtype`, it will be set in checker - if_expr
+	left_as_name string // only used in x is SumType check
+}
+
+pub struct UnsafeExpr {
+pub:
+	stmts []Stmt
+	pos   token.Position
+}
+
+pub struct LockExpr {
+pub:
+	stmts    []Stmt
+	is_rlock bool
+	pos      token.Position
+pub mut:
+	lockeds  []Ident // `x`, `y` in `lock x, y {`
+	is_expr  bool
+	typ      table.Type
 }
 
 pub struct MatchExpr {
@@ -456,11 +505,12 @@ pub mut:
 
 pub struct MatchBranch {
 pub:
-	exprs   []Expr // left side
-	stmts   []Stmt // right side
-	pos     token.Position
-	comment Comment // comment above `xxx {`
-	is_else bool
+	exprs         []Expr // left side
+	stmts         []Stmt // right side
+	pos           token.Position
+	comment       Comment // comment above `xxx {`
+	is_else       bool
+	post_comments []Comment
 }
 
 /*
@@ -482,6 +532,15 @@ pub mut:
 	is_opt     bool
 	has_else   bool
 	else_stmts []Stmt
+}
+
+pub struct CompFor {
+pub:
+	val_var string
+	stmts   []Stmt
+pub mut:
+	// expr    Expr
+	typ     table.Type
 }
 
 pub struct ForStmt {
@@ -538,6 +597,7 @@ pub:
 	right         []Expr
 	op            token.Kind
 	pos           token.Position
+	comments      []Comment
 pub mut:
 	left          []Expr
 	left_types    []table.Type
@@ -559,7 +619,8 @@ pub mut:
 // e.g. `[unsafe_fn]`
 pub struct Attr {
 pub:
-	name string
+	name      string
+	is_string bool // `['xxx']`
 }
 
 pub fn (attrs []Attr) contains(attr Attr) bool {
@@ -585,17 +646,20 @@ pub struct EnumField {
 pub:
 	name     string
 	pos      token.Position
+	comments []Comment
 	expr     Expr
 	has_expr bool
 }
 
 pub struct EnumDecl {
 pub:
-	name    string
-	is_pub  bool
-	is_flag bool // true when the enum has [flag] tag
-	fields  []EnumField
-	pos     token.Position
+	name             string
+	is_pub           bool
+	is_flag          bool // true when the enum has [flag] tag
+	is_multi_allowed bool
+	comments         []Comment // enum Abc { /* comments */ ... }
+	fields           []EnumField
+	pos              token.Position
 }
 
 pub struct AliasTypeDecl {
@@ -753,8 +817,11 @@ pub mut:
 
 pub struct SizeOf {
 pub:
+	is_type   bool
 	typ       table.Type
 	type_name string
+	expr      Expr
+	pos       token.Position
 }
 
 pub struct Likely {
@@ -792,6 +859,7 @@ pub:
 	left        Expr
 	is_vweb     bool
 	vweb_tmpl   File
+	args_var    string
 pub mut:
 	sym         table.TypeSymbol
 }
@@ -809,7 +877,6 @@ pub enum SqlExprKind {
 	update
 }
 */
-
 pub enum SqlStmtKind {
 	insert
 	update
@@ -818,32 +885,39 @@ pub enum SqlStmtKind {
 
 pub struct SqlStmt {
 pub:
-	kind SqlStmtKind
-	db_expr    Expr // `db` in `sql db {`
+	kind            SqlStmtKind
+	db_expr         Expr // `db` in `sql db {`
 	object_var_name string // `user`
 	table_type      table.Type
-	pos token.Position
-	where_expr Expr
-	updated_columns []string //for `update set x=y`
-	update_exprs []Expr//for `update`
+	pos             token.Position
+	where_expr      Expr
+	updated_columns []string // for `update set x=y`
+	update_exprs    []Expr // for `update`
 pub mut:
-	table_name string
-	fields     []table.Field
+	table_name      string
+	fields          []table.Field
 }
 
 pub struct SqlExpr {
 pub:
-	typ        table.Type
-	is_count   bool
-	db_expr    Expr // `db` in `sql db {`
-	where_expr Expr
-	has_where  bool
-	is_array   bool
-	table_type table.Type
-	pos token.Position
+	typ         table.Type
+	is_count    bool
+	db_expr     Expr // `db` in `sql db {`
+	where_expr  Expr
+	has_where   bool
+	has_offset  bool
+	offset_expr Expr
+	has_order   bool
+	order_expr  Expr
+	has_desc    bool
+	is_array    bool
+	table_type  table.Type
+	pos         token.Position
+	has_limit   bool
+	limit_expr  Expr
 pub mut:
-	table_name string
-	fields     []table.Field
+	table_name  string
+	fields      []table.Field
 }
 
 [inline]
@@ -857,14 +931,13 @@ pub fn (expr Expr) is_blank_ident() bool {
 pub fn (expr Expr) position() token.Position {
 	// all uncommented have to be implemented
 	match mut expr {
+		AnonFn {
+			return expr.decl.pos
+		}
 		ArrayInit {
 			return expr.pos
 		}
 		AsCast {
-			return expr.pos
-		}
-		// ast.Ident { }
-		CastExpr {
 			return expr.pos
 		}
 		Assoc {
@@ -873,10 +946,17 @@ pub fn (expr Expr) position() token.Position {
 		BoolLiteral {
 			return expr.pos
 		}
+		// ast.Ident { }
 		CallExpr {
 			return expr.pos
 		}
+		CastExpr {
+			return expr.pos
+		}
 		CharLiteral {
+			return expr.pos
+		}
+		Comment {
 			return expr.pos
 		}
 		EnumVal {
@@ -898,8 +978,7 @@ pub fn (expr Expr) position() token.Position {
 		InfixExpr {
 			left_pos := expr.left.position()
 			right_pos := expr.right.position()
-			if left_pos.pos == 0 ||
-				right_pos.pos == 0 {
+			if left_pos.pos == 0 || right_pos.pos == 0 {
 				return expr.pos
 			}
 			return token.Position{
@@ -931,7 +1010,9 @@ pub fn (expr Expr) position() token.Position {
 		SelectorExpr {
 			return expr.pos
 		}
-		// ast.SizeOf { }
+		SizeOf {
+			return expr.pos
+		}
 		StringLiteral {
 			return expr.pos
 		}
@@ -964,7 +1045,6 @@ pub fn (stmt Stmt) position() token.Position {
 		// BranchStmt {
 		// }
 		*/
-		Comment { return stmt.pos }
 		CompIf { return stmt.pos }
 		ConstDecl { return stmt.pos }
 		/*
@@ -1004,6 +1084,7 @@ pub fn (stmt Stmt) position() token.Position {
 		// UnsafeStmt {
 		// }
 		*/
+		//
 		else { return token.Position{} }
 	}
 }
@@ -1015,12 +1096,16 @@ pub fn (stmt Stmt) position() token.Position {
 // field table.Field.default_expr, which should be ast.Expr
 pub fn fe2ex(x table.FExpr) Expr {
 	res := Expr{}
-	C.memcpy(&res, &x, sizeof(Expr))
+	unsafe {
+		C.memcpy(&res, &x, sizeof(Expr))
+	}
 	return res
 }
 
 pub fn ex2fe(x Expr) table.FExpr {
 	res := table.FExpr{}
-	C.memcpy(&res, &x, sizeof(table.FExpr))
+	unsafe {
+		C.memcpy(&res, &x, sizeof(table.FExpr))
+	}
 	return res
 }

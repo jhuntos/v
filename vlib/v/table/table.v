@@ -13,25 +13,29 @@ pub mut:
 	type_idxs     map[string]int
 	fns           map[string]Fn
 	imports       []string // List of all imports
-	modules       []string // List of all modules registered by the application
+	modules       []string // Topologically sorted list of all modules registered by the application
 	cflags        []cflag.CFlag
 	redefined_fns []string
 	fn_gen_types  map[string][]Type // for generic functions
+	cmod_prefix   string // needed for table.type_to_str(Type) while vfmt; contains `os.`
 }
 
 pub struct Fn {
 pub:
-	args          []Arg
-	return_type   Type
-	is_variadic   bool
-	language      Language
-	is_generic    bool
-	is_pub        bool
-	is_deprecated bool
-	mod           string
-	ctdefine      string // compile time define. myflag, when [if myflag] tag
+	args           []Arg
+	return_type    Type
+	is_variadic    bool
+	language       Language
+	is_generic     bool
+	is_pub         bool
+	is_deprecated  bool
+	is_unsafe      bool
+	is_placeholder bool
+	mod            string
+	ctdefine       string // compile time define. myflag, when [if myflag] tag
+	attrs          []string
 pub mut:
-	name        string
+	name           string
 }
 
 pub struct Arg {
@@ -108,11 +112,12 @@ pub fn (t &Table) known_fn(name string) bool {
 }
 
 pub fn (mut t Table) register_fn(new_fn Fn) {
-	// println('reg fn $new_fn.name nr_args=$new_fn.args.len')
+	//	println('reg fn $new_fn.name nr_args=$new_fn.args.len')
 	t.fns[new_fn.name] = new_fn
 }
 
 pub fn (mut t TypeSymbol) register_method(new_fn Fn) {
+	//	println('reg me $new_fn.name nr_args=$new_fn.args.len')
 	t.methods << new_fn
 }
 
@@ -224,7 +229,8 @@ pub fn (mut t Table) register_builtin_type_symbol(typ TypeSymbol) int {
 					typ |
 					kind: existing_type.kind
 				}
-			} else {
+			}
+			else {
 				t.types[existing_idx] = typ
 			}
 		}
@@ -487,4 +493,23 @@ pub fn (table &Table) register_fn_gen_type(fn_name string, typ Type) {
 	// sym := table.get_type_symbol(typ)
 	// println('registering fn ($fn_name) gen type $sym.name')
 	table.fn_gen_types[fn_name] = a
+}
+
+
+// TODO: there is a bug when casting sumtype the other way if its pointer
+// so until fixed at least show v (not C) error `x(variant) =  y(SumType*)`
+pub fn (table &Table) sumtype_has_variant(parent Type, variant Type) bool {
+	parent_sym := table.get_type_symbol(parent)
+	if parent_sym.kind ==.sum_type {
+		parent_info := parent_sym.info as SumType
+		for v in parent_info.variants {
+			if v.idx() == variant.idx() {
+				return true
+			}
+			if table.sumtype_has_variant(v, variant) {
+				return true
+			}
+		}
+	}
+	return false
 }

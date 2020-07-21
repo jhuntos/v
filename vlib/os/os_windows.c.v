@@ -22,7 +22,7 @@ struct Filetime {
 }
 
 // win: WIN32_FIND_DATA
-// https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-_win32_find_dataw
+// https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-win32_find_dataw
 struct Win32finddata {
 mut:
     dw_file_attributes u32
@@ -265,8 +265,9 @@ pub fn exec(cmd string) ?Result {
 	C.ExpandEnvironmentStringsW(cmd.to_wide(), voidptr(&command_line), 32768)
 	create_process_ok := C.CreateProcessW(0, command_line, 0, 0, C.TRUE, 0, 0, 0, voidptr(&start_info), voidptr(&proc_info))
 	if !create_process_ok {
-		error_msg := get_error_msg(int(C.GetLastError()))
-		return error('exec failed (CreateProcess): $error_msg cmd: $cmd')
+		error_num := int(C.GetLastError())
+		error_msg := get_error_msg(error_num)
+		return error('exec failed (CreateProcess) with code $error_num: $error_msg cmd: $cmd')
 	}
 	C.CloseHandle(child_stdin)
 	C.CloseHandle(child_stdout_write)

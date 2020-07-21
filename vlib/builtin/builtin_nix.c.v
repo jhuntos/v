@@ -17,7 +17,6 @@ const (
 	stderr_value  = 2
 )
 
-fn C.puts(charptr)
 */
 
 fn builtin_init() {
@@ -95,7 +94,7 @@ fn print_backtrace_skipping_top_frames_linux(skipframes int) bool {
 		beforeaddr := sframe.all_before('[')
 		cmd := 'addr2line -e $executable $addr'
 		// taken from os, to avoid depending on the os module inside builtin.v
-		f := C.popen(cmd.str, 'r')
+		f := C.popen(charptr(cmd.str), 'r')
 		if isnil(f) {
 			eprintln(sframe)
 			continue

@@ -10,7 +10,7 @@ import v.pref
 import term
 
 const (
-c_error_info = '
+	c_error_info      = '
 ==================
 C error. This should never happen.
 
@@ -20,7 +20,7 @@ https://github.com/vlang/v/issues/new/choose
 
 You can also use #help on Discord: https://discord.gg/vlang
 '
-no_compiler_error = '
+	no_compiler_error = '
 ==================
 Error: no C compiler detected.
 
@@ -39,13 +39,13 @@ const (
 	mingw_cc = 'x86_64-w64-mingw32-gcc'
 )
 
-
 fn todo() {
 }
 
 fn (v &Builder) find_win_cc() ?string {
-	$if !windows { return none }
-
+	$if !windows {
+		return none
+	}
 	os.exec('$v.pref.ccompiler -v') or {
 		if v.pref.is_verbose {
 			println('$v.pref.ccompiler not found, looking for msvc...')
@@ -75,6 +75,12 @@ fn (mut v Builder) cc() {
 	}
 	if v.pref.is_verbose {
 		println('builder.cc() pref.out_name="$v.pref.out_name"')
+	}
+	if v.pref.only_check_syntax {
+		if v.pref.is_verbose {
+			println('builder.cc returning early, since pref.only_check_syntax is true')
+		}
+		return
 	}
 	v.build_thirdparty_obj_files()
 	vexe := pref.vexe_path()
@@ -131,16 +137,12 @@ fn (mut v Builder) cc() {
 		}
 	}
 	// arguments for the C compiler
-	mut a := [ v.pref.cflags, '-std=gnu11', '-Wall', '-Wextra',
-		// TODO : activate -Werror once no warnings remain
-		// '-Werror',
-		// TODO : try and remove the below workaround options when the corresponding
-		// warnings are totally fixed/removed
-		'-Wno-unused-variable',
-		// '-Wno-unused-but-set-variable',
-		'-Wno-unused-parameter', '-Wno-unused-result', '-Wno-unused-function', '-Wno-missing-braces',
-			'-Wno-unused-label'
-	]
+	// TODO : activate -Werror once no warnings remain
+	// '-Werror',
+	// TODO : try and remove the below workaround options when the corresponding
+	// warnings are totally fixed/removed
+	mut a := [v.pref.cflags, '-std=gnu11', '-Wall', '-Wextra', '-Wno-unused-variable', '-Wno-unused-parameter',
+		'-Wno-unused-result', '-Wno-unused-function', '-Wno-missing-braces', '-Wno-unused-label']
 	mut linker_flags := []string{}
 	// TCC on Linux by default, unless -cc was provided
 	// TODO if -cc = cc, TCC is still used, default compiler should be
@@ -171,8 +173,8 @@ fn (mut v Builder) cc() {
 			verror('-fast is only supported on Linux right now')
 		}
 	}
-	if !v.pref.is_shared && v.pref.build_mode != .build_module && os.user_os() == 'windows' &&
-		!v.pref.out_name.ends_with('.exe') {
+	if !v.pref.is_shared && v.pref.build_mode != .build_module &&
+		os.user_os() == 'windows' && !v.pref.out_name.ends_with('.exe') {
 		v.pref.out_name += '.exe'
 	}
 	// linux_host := os.user_os() == 'linux'
@@ -194,7 +196,7 @@ fn (mut v Builder) cc() {
 	}
 	if v.pref.build_mode == .build_module {
 		// Create the modules & out directory if it's not there.
-		mut out_dir := if v.pref.path.starts_with('vlib') { '${pref.default_module_path}${os.path_separator}cache${os.path_separator}$v.pref.path' } else { '${pref.default_module_path}${os.path_separator}$v.pref.path' }
+		mut out_dir := if v.pref.path.starts_with('vlib') { '$pref.default_module_path${os.path_separator}cache$os.path_separator$v.pref.path' } else { '$pref.default_module_path$os.path_separator$v.pref.path' }
 		pdir := out_dir.all_before_last(os.path_separator)
 		if !os.is_dir(pdir) {
 			os.mkdir_all(pdir)
@@ -203,14 +205,15 @@ fn (mut v Builder) cc() {
 		println('Building ${v.pref.out_name}...')
 	}
 	debug_mode := v.pref.is_debug
-	mut debug_options := '-g'
+	mut debug_options := '-g3'
 	mut optimization_options := '-O2'
 	mut guessed_compiler := v.pref.ccompiler
 	if guessed_compiler == 'cc' && v.pref.is_prod {
 		// deliberately guessing only for -prod builds for performance reasons
 		if ccversion := os.exec('cc --version') {
 			if ccversion.exit_code == 0 {
-				if ccversion.output.contains('This is free software;') && ccversion.output.contains('Free Software Foundation, Inc.') {
+				if ccversion.output.contains('This is free software;') &&
+					ccversion.output.contains('Free Software Foundation, Inc.') {
 					guessed_compiler = 'gcc'
 				}
 				if ccversion.output.contains('clang version ') {
@@ -222,12 +225,13 @@ fn (mut v Builder) cc() {
 	//
 	is_cc_tcc := ccompiler.contains('tcc') || guessed_compiler == 'tcc'
 	is_cc_clang := !is_cc_tcc && (ccompiler.contains('clang') || guessed_compiler == 'clang')
-	is_cc_gcc := !is_cc_tcc && !is_cc_clang && (ccompiler.contains('gcc') || guessed_compiler == 'gcc')
+	is_cc_gcc := !is_cc_tcc && !is_cc_clang &&
+		(ccompiler.contains('gcc') || guessed_compiler == 'gcc')
 	// is_cc_msvc := v.pref.ccompiler.contains('msvc') || guessed_compiler == 'msvc'
 	//
 	if is_cc_clang {
 		if debug_mode {
-			debug_options = '-g -O0 -no-pie'
+			debug_options = '-g3 -O0 -no-pie'
 		}
 		optimization_options = '-O3'
 		mut have_flto := true
@@ -350,11 +354,11 @@ fn (mut v Builder) cc() {
 		a << '-w'
 	}
 	if v.pref.use_cache {
-		//vexe := pref.vexe_path()
-
-		cached_modules:= [ 'builtin', 'os', 'math', 'strconv', 'strings']
-		for cfile in cached_modules{
-			ofile := os.join_path(pref.default_module_path, 'cache', 'vlib', cfile + '.o')
+		// vexe := pref.vexe_path()
+		cached_modules := ['builtin', 'os', 'math', 'strconv', 'strings', 'hash'] // , 'strconv.ftoa']
+		for cfile in cached_modules {
+			ofile := os.join_path(pref.default_module_path, 'cache', 'vlib', cfile.replace('.', '/') +
+				'.o')
 			if !os.exists(ofile) {
 				println('${cfile}.o is missing. Building...')
 				println('$vexe build-module vlib/$cfile')
@@ -374,8 +378,8 @@ fn (mut v Builder) cc() {
 	}
 	// Without these libs compilation will fail on Linux
 	// || os.user_os() == 'linux'
-	if !v.pref.is_bare && v.pref.build_mode != .build_module && v.pref.os in [ .linux, .freebsd,
-		.openbsd, .netbsd, .dragonfly, .solaris, .haiku] {
+	if !v.pref.is_bare && v.pref.build_mode != .build_module &&
+		v.pref.os in [.linux, .freebsd, .openbsd, .netbsd, .dragonfly, .solaris, .haiku] {
 		linker_flags << '-lm'
 		linker_flags << '-lpthread'
 		// -ldl is a Linux only thing. BSDs have it in libc.
@@ -395,14 +399,26 @@ fn (mut v Builder) cc() {
 		println('cc args=$args')
 		println(a)
 	}
+	// write args to response file
+	response_file := '${v.out_name_c}.rsp'
+	response_file_content := args.replace('\\', '\\\\')
+	os.write_file(response_file, response_file_content) or {
+		verror('Unable to write response file "$response_file"')
+	}
 	start:
 	todo()
 	// TODO remove
-	cmd := '${ccompiler} $args'
+	cmd := '$ccompiler @$response_file'
 	// Run
 	if v.pref.is_verbose || v.pref.show_cc {
-		println('\n==========')
-		println(cmd)
+		println('')
+		println('=====================')
+		println('> C compiler cmd: $cmd')
+		if v.pref.show_cc {
+			println('> C compiler response file $response_file:')
+			println(response_file_content)
+		}
+		println('=====================')
 	}
 	ticks := time.ticks()
 	res := os.exec(cmd) or {
@@ -429,8 +445,9 @@ fn (mut v Builder) cc() {
 					goto start
 				}
 			}
-			verror('C compiler error, while attempting to run: \n' + '-----------------------------------------------------------\n' +
-				'$cmd\n' + '-----------------------------------------------------------\n' + 'Probably your C compiler is missing. \n' +
+			verror('C compiler error, while attempting to run: \n' +
+				'-----------------------------------------------------------\n' + '$cmd\n' +
+				'-----------------------------------------------------------\n' + 'Probably your C compiler is missing. \n' +
 				'Please reinstall it, or make it available in your PATH.\n\n' + missing_compiler_info())
 		}
 		if v.pref.is_debug {
@@ -457,9 +474,10 @@ fn (mut v Builder) cc() {
 	diff := time.ticks() - ticks
 	// Print the C command
 	if v.pref.is_verbose {
-		println('${ccompiler} took $diff ms')
+		println('$ccompiler took $diff ms')
 		println('=========\n')
 	}
+	v.timing_message('C ${ccompiler:3}: ${diff}ms')
 	// Link it if we are cross compiling and need an executable
 	/*
 	if v.os == .linux && !linux_host && v.pref.build_mode != .build {
@@ -482,9 +500,6 @@ fn (mut v Builder) cc() {
 		println('linux cross compilation done. resulting binary: "$v.out_name"')
 	}
 	*/
-	if !v.pref.keep_c && v.out_name_c != 'v.c' {
-		os.rm(v.out_name_c)
-	}
 	if v.pref.compress {
 		$if windows {
 			println('-compress does not work on Windows for now')
@@ -518,57 +533,49 @@ fn (mut v Builder) cc() {
 
 fn (mut b Builder) cc_linux_cross() {
 	parent_dir := os.home_dir() + '.vmodules'
+	if !os.exists(parent_dir) {
+		os.mkdir(parent_dir)
+	}
 	sysroot := os.home_dir() + '.vmodules/linuxroot/'
+	zip_url := 'https://github.com/vlang/v/releases/download/0.1.27/linuxroot.zip'
 	if !os.is_dir(sysroot) {
 		println('Downloading files for Linux cross compilation (~18 MB)...')
-		zip_file := sysroot[..sysroot.len-1] + '.zip'
-		os.system('curl -L -o $zip_file https://github.com/vlang/v/releases/download/0.1.27/linuxroot.zip ')
+		zip_file := sysroot[..sysroot.len - 1] + '.zip'
+		os.system('curl -L -o $zip_file $zip_url')
 		os.system('unzip -q $zip_file -d $parent_dir')
 		if !os.is_dir(sysroot) {
 			println('Failed to download.')
 			exit(1)
 		}
 	}
-
 	mut cc_args := '-fPIC -w -c -target x86_64-linux-gnu -c -o x.o $b.out_name_c -I $sysroot/include '
 	cflags := b.get_os_cflags()
 	cc_args += cflags.c_options_without_object_files()
 	if b.pref.show_cc {
 		println('cc $cc_args')
 	}
-	cc_res := os.exec('cc $cc_args') or { return }
+	cc_res := os.exec('cc $cc_args') or {
+		return
+	}
 	if cc_res.exit_code != 0 {
 		println('Cross compilation for Linux failed (first step, clang). Make sure you have clang installed.')
 		println(cc_res.output)
 		exit(1)
 	}
-
-	linker_args := [
-		'-L $sysroot/usr/lib/x86_64-linux-gnu/'
-		'--sysroot=$sysroot -v -o $b.pref.out_name -m elf_x86_64'
-		'-dynamic-linker /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2'
-		'$sysroot/crt1.o $sysroot/crti.o x.o'
-		//'SYSROOT/lib/x86_64-linux-gnu/libc.so.6'
-		'-lc'
-		//'-ldl'
-		//'SYSROOT/lib/x86_64-linux-gnu/libcrypto.so'
-		'-lcrypto'
-		'-lssl'
-		'-lpthread'
-		'-ldl'
-		//'-dynamic-linker /usr/lib/x86_64-linux-gnu/libcrypto.so'
-		//'SYSROOT/lib/x86_64-linux-gnu/libssl.a'
-		'$sysroot/crtn.o'
-		cflags.c_options_only_object_files()
-	]
+	linker_args := ['-L $sysroot/usr/lib/x86_64-linux-gnu/', '--sysroot=$sysroot -v -o $b.pref.out_name -m elf_x86_64',
+		'-dynamic-linker /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2', '$sysroot/crt1.o $sysroot/crti.o x.o',
+		'-lc', '-lcrypto', '-lssl', '-lpthread', '$sysroot/crtn.o', cflags.c_options_only_object_files()]
+	// -ldl
 	linker_args_str := linker_args.join(' ')
 	cmd := '$sysroot/ld.lld ' + linker_args_str
-	//s = s.replace('SYSROOT', sysroot) // TODO $ inter bug
-	//s = s.replace('-o hi', '-o ' + c.pref.out_name)
+	// s = s.replace('SYSROOT', sysroot) // TODO $ inter bug
+	// s = s.replace('-o hi', '-o ' + c.pref.out_name)
 	if b.pref.show_cc {
 		println(cmd)
 	}
-	res :=	os.exec(cmd) or { return }
+	res := os.exec(cmd) or {
+		return
+	}
 	if res.exit_code != 0 {
 		println('Cross compilation for Linux failed (second step, lld):')
 		println(res.output)
@@ -592,23 +599,21 @@ fn (mut c Builder) cc_windows_cross() {
 		optimization_options = if c.pref.ccompiler == 'msvc' { '' } else { ' -O3 -fno-strict-aliasing -flto ' }
 	}
 	if c.pref.is_debug {
-		debug_options =  if c.pref.ccompiler == 'msvc' { '' } else { ' -g3 -no-pie ' }
+		debug_options = if c.pref.ccompiler == 'msvc' { '' } else { ' -g3 -no-pie ' }
 	}
 	mut libs := ''
 	if false && c.pref.build_mode == .default_mode {
-		libs = '"${pref.default_module_path}/vlib/builtin.o"'
+		libs = '"$pref.default_module_path/vlib/builtin.o"'
 		if !os.exists(libs) {
 			println('`$libs` not found')
 			exit(1)
 		}
 		for imp in c.table.imports {
-			libs += ' "${pref.default_module_path}/vlib/${imp}.o"'
+			libs += ' "$pref.default_module_path/vlib/${imp}.o"'
 		}
 	}
 	args += ' $c.out_name_c '
-
 	args += if c.pref.ccompiler == 'msvc' { cflags.c_options_after_target_msvc() } else { cflags.c_options_after_target() }
-
 	/*
 	winroot := '${pref.default_module_path}/winroot'
 	if !os.is_dir(winroot) {
@@ -624,12 +629,12 @@ fn (mut c Builder) cc_windows_cross() {
 	obj_name = obj_name.replace('.o.o', '.o')
 	include := '-I $winroot/include '
 	*/
-	if os.user_os() !in ['mac', 'darwin','linux'] {
+	if os.user_os() !in ['mac', 'darwin', 'linux'] {
 		println(os.user_os())
 		panic('your platform is not supported yet')
 	}
 	mut cmd := '$mingw_cc $optimization_options $debug_options -std=gnu11 $args -municode'
-	//cmd := 'clang -o $obj_name -w $include -m32 -c -target x86_64-win32 ${pref.default_module_path}/$c.out_name_c'
+	// cmd := 'clang -o $obj_name -w $include -m32 -c -target x86_64-win32 ${pref.default_module_path}/$c.out_name_c'
 	if c.pref.is_verbose || c.pref.show_cc {
 		println(cmd)
 	}
@@ -664,7 +669,7 @@ fn (c &Builder) build_thirdparty_obj_files() {
 		if flag.value.ends_with('.o') {
 			rest_of_module_flags := c.get_rest_of_module_cflags(flag)
 			if c.pref.ccompiler == 'msvc' {
-				build_thirdparty_obj_file_with_msvc(flag.value, rest_of_module_flags)
+				c.build_thirdparty_obj_file_with_msvc(flag.value, rest_of_module_flags)
 			} else {
 				c.build_thirdparty_obj_file(flag.value, rest_of_module_flags)
 			}
@@ -687,16 +692,7 @@ fn (mut v Builder) build_thirdparty_obj_file(path string, moduleflags []cflag.CF
 		return
 	}
 	println('$obj_path not found, building it...')
-	parent := os.dir(obj_path)
-	files := os.ls(parent) or {
-		panic(err)
-	}
-	mut cfiles := ''
-	for file in files {
-		if file.ends_with('.c') {
-			cfiles += '"' + os.real_path(parent + os.path_separator + file) + '" '
-		}
-	}
+	cfiles := '${path[..path.len-2]}.c'
 	btarget := moduleflags.c_options_before_target()
 	atarget := moduleflags.c_options_after_target()
 	cppoptions := if v.pref.ccompiler.contains('++') { ' -fpermissive -w ' } else { '' }

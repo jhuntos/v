@@ -13,7 +13,7 @@ fn test_all() {
 		eprintln('You can still do it by setting FORCE_VALGRIND_TEST=1 .')
 		exit(0)
 	}
-	if os.getenv('V_CI_MUSL').len > 0 {
+	if os.getenv('V_CI_UBUNTU_MUSL').len > 0 {
 		eprintln('This test is disabled for musl.')
 		exit(0)
 	}
@@ -38,7 +38,7 @@ fn test_all() {
 		full_test_path := os.real_path(test)
 		println('x.v: $wrkdir/x.v')
 		os.system('cp ${dir}/${test} $wrkdir/x.v') // cant run .vv file
-		compile_cmd := '$vexe -cflags "-w" -verbose=3 -autofree -keepc -cg $wrkdir/x.v'
+		compile_cmd := '$vexe -cflags "-w" -verbose=3 -autofree -cg $wrkdir/x.v'
 		vprintln('compile cmd: $compile_cmd')
 		res := os.exec(compile_cmd) or {
 			bench.fail()

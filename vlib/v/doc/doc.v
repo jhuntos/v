@@ -33,37 +33,30 @@ pub:
 
 pub struct DocNode {
 pub mut:
-	name        string
-	content     string = ''
-	comment     string
-	pos         DocPos = DocPos{-1, -1}
-	file_path   string = ''
-	attrs       map[string]string
+	name      string
+	content   string = ''
+	comment   string
+	pos       DocPos = DocPos{-1, -1}
+	file_path string = ''
+	attrs     map[string]string
 }
 
-pub fn merge_comments(stmts []ast.Stmt) string {
+pub fn merge_comments(comments []ast.Comment) string {
 	mut res := []string{}
-	for s in stmts {
-		if s is ast.Comment {
-			c  := s as ast.Comment
-			res << c.text.trim_left('|')
-		}
+	for comment in comments {
+		res << comment.text.trim_left('|')
 	}
 	return res.join('\n')
 }
 
-pub fn get_comment_block_right_before(stmts []ast.Stmt) string {
-	if stmts.len == 0 {
+pub fn get_comment_block_right_before(comments []ast.Comment) string {
+	if comments.len == 0 {
 		return ''
 	}
 	mut comment := ''
 	mut last_comment_line_nr := 0
-	for i := stmts.len-1; i >= 0; i-- {
-		stmt := stmts[i]
-		if stmt !is ast.Comment {
-			panic('Not a comment')
-		}
-		cmt := stmt as ast.Comment
+	for i := comments.len - 1; i >= 0; i-- {
+		cmt := comments[i]
 		if last_comment_line_nr != 0 && cmt.pos.line_nr < last_comment_line_nr - 1 {
 			// skip comments that are not part of a continuous block,
 			// located right above the top level statement.
@@ -93,8 +86,8 @@ pub fn get_comment_block_right_before(stmts []ast.Stmt) string {
 			// }
 			// return new_cmt_content
 		}
-		//eprintln('cmt: $cmt')
-		cseparator := if cmt_content.starts_with('```') {'\n'} else {' '}
+		// eprintln('cmt: $cmt')
+		cseparator := if cmt_content.starts_with('```') { '\n' } else { ' ' }
 		comment = cmt_content + cseparator + comment
 		last_comment_line_nr = cmt.pos.line_nr
 	}
@@ -119,7 +112,7 @@ pub fn (mut d Doc) get_signature(stmt ast.Stmt, file &ast.File) string {
 			return 'module $stmt.name'
 		}
 		ast.FnDecl {
-			return stmt.str(d.table).replace(d.fmt.cur_mod + '.', '')
+			return stmt.stringify(d.table, d.fmt.cur_mod)
 		}
 		else {
 			d.fmt.out = strings.new_builder(1000)
@@ -172,7 +165,7 @@ pub fn new(input_path string) Doc {
 	d.fmt = fmt.Fmt{
 		indent: 0
 		is_debug: false
-	    table: d.table
+		table: d.table
 	}
 	return d
 }
@@ -199,7 +192,9 @@ fn compare_nodes_by_category(a, b &DocNode) int {
 
 pub fn (nodes []DocNode) index_by_name(node_name string) int {
 	for i, node in nodes {
-		if node.name != node_name { continue }
+		if node.name != node_name {
+			continue
+		}
 		return i
 	}
 	return -1
@@ -209,7 +204,7 @@ pub fn (nodes []DocNode) find_children_of(parent string) []DocNode {
 	return nodes.find_nodes_with_attr('parent', parent)
 }
 
-pub fn (nodes []DocNode) find_nodes_with_attr(attr_name string, value string) []DocNode {
+pub fn (nodes []DocNode) find_nodes_with_attr(attr_name, value string) []DocNode {
 	mut subgroup := []DocNode{}
 	if attr_name.len == 0 {
 		return subgroup
@@ -227,9 +222,13 @@ pub fn (nodes []DocNode) find_nodes_with_attr(attr_name string, value string) []
 fn get_parent_mod(dir string) ?string {
 	$if windows {
 		// windows root path is C: or D:
-		if dir.len <= 2 { return error('root folder reached') }
+		if dir.len <= 2 {
+			return error('root folder reached')
+		}
 	} $else {
-		if dir.len == 0 { return error('root folder reached') }
+		if dir.len == 0 {
+			return error('root folder reached')
+		}
 	}
 	base_dir := os.base_dir(dir)
 	if os.file_name(base_dir) in ['encoding', 'v'] && 'vlib' in base_dir {
@@ -250,7 +249,9 @@ fn get_parent_mod(dir string) ?string {
 		return error('No V files found.')
 	}
 	tbl := table.new_table()
-	scope := &ast.Scope{ parent: 0 }
+	scope := &ast.Scope{
+		parent: 0
+	}
 	file_ast := parser.parse_file(v_files[0], tbl, .skip_comments, prefs, scope)
 	if file_ast.mod.name == 'main' {
 		return ''
@@ -308,7 +309,7 @@ fn (mut d Doc) generate() ?Doc {
 		}
 		stmts := file_ast.stmts
 		d.fmt.file = file_ast
-		d.fmt.cur_mod = orig_mod_name
+		d.fmt.set_current_module_name(orig_mod_name)
 		d.fmt.process_file_imports(file_ast)
 		mut last_import_stmt_idx := 0
 		for sidx, stmt in stmts {
@@ -316,13 +317,15 @@ fn (mut d Doc) generate() ?Doc {
 				last_import_stmt_idx = sidx
 			}
 		}
-		mut prev_comments := []ast.Stmt{}
+		mut prev_comments := []ast.Comment{}
 		mut imports_section := true
 		for sidx, stmt in stmts {
-			//eprintln('stmt typeof: ' + typeof(stmt))
-			if stmt is ast.Comment {
-				prev_comments << stmt
-				continue
+			// eprintln('stmt typeof: ' + typeof(stmt))
+			if stmt is ast.ExprStmt {
+				if stmt.expr is ast.Comment as cmt {
+					prev_comments << cmt
+					continue
+				}
 			}
 			// TODO: Fetch head comment once
 			if stmt is ast.Module {
@@ -375,16 +378,20 @@ fn (mut d Doc) generate() ?Doc {
 				continue
 			}
 			if stmt is ast.FnDecl {
-				fnd := stmt as ast.FnDecl
-				if fnd.receiver.typ != 0 {
-					node.attrs['parent'] = d.fmt.type_to_str(fnd.receiver.typ).trim_left('&')
+				if stmt.is_deprecated {
+					continue
+				}
+				if stmt.receiver.typ != 0 {
+					node.attrs['parent'] = d.fmt.type_to_str(stmt.receiver.typ).trim_left('&')
 					p_idx := d.contents.index_by_name(node.attrs['parent'])
 					if p_idx == -1 && node.attrs['parent'] != 'void' {
 						d.contents << DocNode{
 							name: node.attrs['parent']
 							content: ''
 							comment: ''
-							attrs: {'category': 'Structs'}
+							attrs: {
+								'category': 'Structs'
+							}
 						}
 					}
 				}
@@ -402,7 +409,7 @@ fn (mut d Doc) generate() ?Doc {
 				ast.InterfaceDecl { node.attrs['category'] = 'Interfaces' }
 				ast.StructDecl { node.attrs['category'] = 'Structs' }
 				ast.TypeDecl { node.attrs['category'] = 'Typedefs' }
-				ast.FnDecl { 
+				ast.FnDecl {
 					node.attrs['category'] = if node.attrs['parent'] in ['void', ''] || !node.attrs.exists('parent') {
 						'Functions'
 					} else {
@@ -419,7 +426,6 @@ fn (mut d Doc) generate() ?Doc {
 			}
 			prev_comments = []
 		}
-
 		d.fmt.mod2alias = map[string]string{}
 	}
 	d.time_generated = time.now()

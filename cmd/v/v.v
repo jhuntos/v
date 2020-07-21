@@ -11,8 +11,8 @@ import v.builder
 
 const (
 	simple_cmd = [
-		'fmt', 'up',
-		'self', 'symlink', 'bin2v',
+		'fmt', 'up', 'vet',
+		'self', 'tracev', 'symlink', 'bin2v',
 		'test', 'test-fmt', 'test-compiler', 'test-fixed',
 		'repl',
 		'build-tools', 'build-examples',
@@ -23,16 +23,12 @@ const (
 )
 
 fn main() {
-	main_v()
-}
-
-fn main_v() {
 	args := os.args[1..]
 	// args = 123
 	if args.len == 0 || args[0] in ['-', 'repl'] {
 		// Running `./v` without args launches repl
 		if args.len == 0 {
-			println('For usage information, quit V REPL using `exit` and use `v help`')
+			println('For usage information, quit V REPL and run `v help`')
 		}
 		util.launch_tool(false, 'vrepl', os.args[1..])
 		return
@@ -74,12 +70,12 @@ fn main_v() {
 			println('Translating C to V will be available in V 0.3')
 			return
 		}
-		'search', 'install', 'update', 'remove' {
+		'search', 'install', 'update', 'outdated', 'list', 'remove' {
 			util.launch_tool(prefs.is_verbose, 'vpm', os.args[1..])
 			return
 		}
 		'vlib-docs' {
-			util.launch_tool(prefs.is_verbose, 'vdoc', ['doc', '-m', '-s', os.join_path(os.base_dir(@VEXE), 'vlib')])
+			util.launch_tool(prefs.is_verbose, 'vdoc', ['doc', 'vlib'])
 		}
 		'get' {
 			println('V Error: Use `v install` to install modules from vpm.vlang.io')
@@ -91,7 +87,7 @@ fn main_v() {
 		}
 		else {}
 	}
-	if command in ['run', 'build-module'] || command.ends_with('.v') || os.exists(command) {
+	if command in ['run', 'build', 'build-module'] || command.ends_with('.v') || os.exists(command) {
 		// println('command')
 		// println(prefs.path)
 		builder.compile(command, prefs)

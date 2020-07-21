@@ -13,6 +13,16 @@ pub fn (t Time) format_ss() string {
 	return t.get_fmt_str(.hyphen, .hhmmss24, .yyyymmdd)
 }
 
+// format_ss_milli returns a date string in "YYYY-MM-DD HH:MM:SS.123" format (24h).
+pub fn (t Time) format_ss_milli() string {
+	return t.get_fmt_str(.hyphen, .hhmmss24_milli, .yyyymmdd)
+}
+
+// format_ss_micro returns a date string in "YYYY-MM-DD HH:MM:SS.123456" format (24h).
+pub fn (t Time) format_ss_micro() string {
+	return t.get_fmt_str(.hyphen, .hhmmss24_micro, .yyyymmdd)
+}
+
 // hhmm returns a date string in "HH:MM" format (24h).
 pub fn (t Time) hhmm() string {
 	return t.get_fmt_time_str(.hhmm24)
@@ -48,13 +58,13 @@ pub fn (t Time) md() string {
 //  - a date string in "MMM D HH:MM" format (24h) for date of current year
 //  - a date string formatted with format function for other dates
 pub fn (t Time) clean() string {
-	now := time.now()
+	znow := time.now()
 	// Today
-	if t.month == now.month && t.year == now.year && t.day == now.day {
+	if t.month == znow.month && t.year == znow.year && t.day == znow.day {
 		return t.get_fmt_time_str(.hhmm24)
 	}
 	// This year
-	if t.year == now.year {
+	if t.year == znow.year {
 		return t.get_fmt_str(.space, .hhmm24, .mmmd)
 	}
 	return t.format()
@@ -65,13 +75,13 @@ pub fn (t Time) clean() string {
 //  - a date string in "MMM D HH:MM" format (12h) for date of current year
 //  - a date string formatted with format function for other dates
 pub fn (t Time) clean12() string {
-	now := time.now()
+	znow := time.now()
 	// Today
-	if t.month == now.month && t.year == now.year && t.day == now.day {
+	if t.month == znow.month && t.year == znow.year && t.day == znow.day {
 		return t.get_fmt_time_str(.hhmm12)
 	}
 	// This year
-	if t.year == now.year {
+	if t.year == znow.year {
 		return t.get_fmt_str(.space, .hhmm12, .mmmd)
 	}
 	return t.format()
@@ -96,6 +106,12 @@ pub fn (t Time) get_fmt_time_str(fmt_time FormatTime) string {
 		}
 		.hhmmss24{
 			'${t.hour:02d}:${t.minute:02d}:${t.second:02d}'
+		}
+		.hhmmss24_milli{
+			'${t.hour:02d}:${t.minute:02d}:${t.second:02d}.${(t.microsecond/1000):03d}'
+		}
+		.hhmmss24_micro{
+			'${t.hour:02d}:${t.minute:02d}:${t.second:02d}.${t.microsecond:06d}'
 		}
 		else {
 			'unknown enumeration $fmt_time'}
@@ -178,4 +194,12 @@ pub fn (t Time) get_fmt_str(fmt_dlmtr FormatDelimiter, fmt_time FormatTime, fmt_
 			return t.get_fmt_date_str(fmt_dlmtr, fmt_date)
 		}
 	}
+}
+
+// This is just a TEMPORARY function for cookies and their expire dates
+pub fn (time Time) utc_string() string {
+	day_str := time.weekday_str()
+	month_str := time.smonth()
+	utc_string := '$day_str, $time.day $month_str $time.year ${time.hour:02d}:${time.minute:02d}:${time.second:02d} UTC'
+	return utc_string
 }

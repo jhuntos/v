@@ -43,14 +43,20 @@ fn panic_debug(line_no int, file, mod, fn_name, s string) {
 	eprintln('     file: $file')
 	eprintln('     line: ' + line_no.str())
 	eprintln('=========================================')
-	print_backtrace_skipping_top_frames(1)
+	// recent versions of tcc print better backtraces automatically
+	$if !tinyc {
+		print_backtrace_skipping_top_frames(1)
+	}
 	break_if_debugger_attached()
 	C.exit(1)
 }
 
 pub fn panic(s string) {
 	eprintln('V panic: $s')
-	print_backtrace()
+	// recent versions of tcc print better backtraces automatically
+	$if !tinyc {
+		print_backtrace()
+	}
 	break_if_debugger_attached()
 	C.exit(1)
 }
@@ -136,12 +142,15 @@ pub fn malloc(n int) byteptr {
 		panic('malloc(<=0)')
 	}
 	$if prealloc {
+		//println('p')
 		res := g_m2_ptr
-		g_m2_ptr += n
+		unsafe {
+			g_m2_ptr += n
+		}
 		nr_mallocs++
 		return res
 	} $else {
-		ptr := C.malloc(n)
+		ptr := unsafe {C.malloc(n)}
 		if ptr == 0 {
 			panic('malloc($n) failed')
 		}
@@ -162,32 +171,47 @@ TODO
 */
 }
 
+//#include <malloc/malloc.h>
+//fn malloc_size(b byteptr) int
+
 [unsafe_fn]
-pub fn v_realloc(b byteptr, n int) byteptr {
-	ptr := C.realloc(b, n)
-	if ptr == 0 {
-		panic('realloc($n) failed')
+pub fn v_realloc(b byteptr, n u32) byteptr {
+	$if prealloc {
+		unsafe {
+			new_ptr := malloc(int(n))
+			size := 0 //malloc_size(b)
+			C.memcpy(new_ptr, b, size)
+			return new_ptr
+		}
+	} $else {
+		ptr := unsafe {C.realloc(b, n)}
+		if ptr == 0 {
+			panic('realloc($n) failed')
+		}
+		return ptr
 	}
-
-	return ptr
 }
 
+[unsafe_fn]
 pub fn v_calloc(n int) byteptr {
-	return C.calloc(n, 1)
+	return C.calloc(1, n)
 }
 
+[unsafe_fn]
 pub fn vcalloc(n int) byteptr {
 	if n < 0 {
 		panic('calloc(<=0)')
 	} else if n == 0 {
 		return byteptr(0)
-	} else {
-		return C.calloc(n, 1)
 	}
+	return C.calloc(1, n)
 }
 
 [unsafe_fn]
 pub fn free(ptr voidptr) {
+	$if prealloc {
+		return
+	}
 	C.free(ptr)
 }
 
@@ -195,11 +219,16 @@ pub fn memdup(src voidptr, sz int) voidptr {
 	if sz == 0 {
 		return vcalloc(1)
 	}
-	mem := malloc(sz)
-	return C.memcpy(mem, src, sz)
+	unsafe {
+		mem := malloc(sz)
+		return C.memcpy(mem, src, sz)
+	}
 }
 
 fn v_ptr_free(ptr voidptr) {
+	$if prealloc {
+		return
+	}
 	C.free(ptr)
 }
 
@@ -223,7 +252,7 @@ fn __as_cast(obj voidptr, obj_type, expected_type int) voidptr {
 
 // VAssertMetaInfo is used during assertions. An instance of it
 // is filled in by compile time generated code, when an assertion fails.
-struct VAssertMetaInfo {
+pub struct VAssertMetaInfo {
 pub:
 	fpath   string // the source file path of the assertion
 	line_nr int    // the line number of the assertion
@@ -246,4 +275,10 @@ fn __print_assert_failure(i &VAssertMetaInfo) {
 			eprintln('  right value: ${i.rlabel} = ${i.rvalue}')
 		}
 	}
+}
+
+pub struct MethodAttr {
+pub:
+	value string
+	method string
 }

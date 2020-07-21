@@ -8,12 +8,15 @@ import os
 import v.pref
 
 fn get_vtmp_folder() string {
-	vtmp := os.join_path(os.temp_dir(), 'v')
-	if !os.is_dir(vtmp) {
-		os.mkdir(vtmp) or {
-			verror(err)
-		}
+	mut vtmp := os.getenv('VTMP')
+	if vtmp.len > 0 {
+		return vtmp
 	}
+	vtmp = os.join_path(os.temp_dir(), 'v')
+	if !os.exists(vtmp) || !os.is_dir(vtmp) {
+		os.mkdir_all(vtmp)
+	}
+	os.setenv('VTMP', vtmp, true)
 	return vtmp
 }
 
@@ -36,20 +39,25 @@ pub fn compile(command string, pref &pref.Preferences) {
 		.x64 { b.compile_x64() }
 	}
 	if pref.is_stats {
-		println('compilation took: ${sw.elapsed().milliseconds()} ms')
+		println('compilation took: $sw.elapsed().milliseconds() ms')
 	}
 	// running does not require the parsers anymore
-	b.myfree()
+	unsafe {
+		b.myfree()
+	}
 	if pref.is_test || pref.is_run {
 		b.run_compiled_executable_and_exit()
 	}
 }
 
 // Temporary, will be done by -autofree
+[unsafe_fn]
 fn (mut b Builder) myfree() {
 	// for file in b.parsed_files {
 	// }
-	b.parsed_files.free()
+	unsafe {
+		b.parsed_files.free()
+	}
 }
 
 fn (mut b Builder) run_compiled_executable_and_exit() {
@@ -59,9 +67,7 @@ fn (mut b Builder) run_compiled_executable_and_exit() {
 	if b.pref.is_verbose {
 		println('============ running $b.pref.out_name ============')
 	}
-	
-	mut cmd := '"${b.pref.out_name}"'
-	
+	mut cmd := '"$b.pref.out_name"'
 	if b.pref.backend == .js {
 		cmd = 'node "${b.pref.out_name}.js"'
 	}
@@ -126,28 +132,38 @@ fn (mut v Builder) set_module_lookup_paths() {
 }
 
 pub fn (v Builder) get_builtin_files() []string {
-	if v.pref.build_mode == .build_module && v.pref.path == 'vlib/builtin' { // .contains('builtin/' +  location {
+	/*
+	// if v.pref.build_mode == .build_module && v.pref.path == 'vlib/builtin' { // .contains('builtin/' +  location {
+	if v.pref.build_mode == .build_module && v.pref.path == 'vlib/strconv' { // .contains('builtin/' +  location {
 		// We are already building builtin.o, no need to import them again
 		if v.pref.is_verbose {
 			println('skipping builtin modules for builtin.o')
 		}
 		return []
 	}
+	*/
 	// println('get_builtin_files() lookuppath:')
 	// println(v.pref.lookup_path)
 	// Lookup for built-in folder in lookup path.
 	// Assumption: `builtin/` folder implies usable implementation of builtin
 	for location in v.pref.lookup_path {
-		if !os.exists(os.join_path(location, 'builtin')) {
-			continue
+		if os.exists(os.join_path(location, 'builtin')) {
+			mut builtin_files := []string{}
+			if v.pref.is_bare {
+				builtin_files << v.v_files_from_dir(os.join_path(location, 'builtin', 'bare'))
+			} else if v.pref.backend == .js {
+				builtin_files << v.v_files_from_dir(os.join_path(location, 'builtin', 'js'))
+			} else {
+				builtin_files << v.v_files_from_dir(os.join_path(location, 'builtin'))
+			}
+			if v.pref.backend == .c {
+				// TODO JavaScript backend doesn't handle os for now
+				if v.pref.is_script && os.exists(os.join_path(location, 'os')) {
+					builtin_files << v.v_files_from_dir(os.join_path(location, 'os'))
+				}
+			}
+			return builtin_files
 		}
-		if v.pref.is_bare {
-			return v.v_files_from_dir(os.join_path(location, 'builtin', 'bare'))
-		}
-		if v.pref.backend == .js {
-			return v.v_files_from_dir(os.join_path(location, 'builtin', 'js'))
-		}
-		return v.v_files_from_dir(os.join_path(location, 'builtin'))
 	}
 	// Panic. We couldn't find the folder.
 	verror('`builtin/` not included on module lookup path.
@@ -155,11 +171,14 @@ Did you forget to add vlib to the path? (Use @vlib for default vlib)')
 	panic('Unreachable code reached.')
 }
 
-pub fn (v Builder) get_user_files() []string {
-	if v.pref.path == 'vlib/builtin' {
-		// get_builtin_files() has already added the builtin files:
+pub fn (v &Builder) get_user_files() []string {
+	if v.pref.path in ['vlib/builtin', 'vlib/strconv', 'vlib/strings', 'vlib/hash'] {
+		// This means we are building a builtin module with `v build-module vlib/strings` etc
+		// get_builtin_files() has already added the files in this module,
+		// do nothing here to avoid duplicate definition errors.
+		v.log('Skipping user files.')
 		return []
-	}        
+	}
 	mut dir := v.pref.path
 	v.log('get_v_files($dir)')
 	// Need to store user files separately, because they have to be added after
@@ -204,7 +223,7 @@ pub fn (v Builder) get_user_files() []string {
 				if line[0] == `/` && line[1] == `/` {
 					continue
 				}
-				if line.starts_with('module ') && !line.starts_with('module main') {
+				if line.starts_with('module ') {
 					is_internal_module_test = true
 					break
 				}
@@ -227,11 +246,11 @@ pub fn (v Builder) get_user_files() []string {
 		// Just compile one file and get parent dir
 		user_files << single_v_file
 		if v.pref.is_verbose {
-			v.log('> just compile one file: "${single_v_file}"')
+			v.log('> just compile one file: "$single_v_file"')
 		}
 	} else {
 		if v.pref.is_verbose {
-			v.log('> add all .v files from directory "${dir}" ...')
+			v.log('> add all .v files from directory "$dir" ...')
 		}
 		// Add .v files from the directory being compiled
 		user_files << v.v_files_from_dir(dir)

@@ -16,7 +16,7 @@ import strings
 pub type Type int
 
 pub type TypeInfo = Alias | Array | ArrayFixed | Enum | FnType | Interface | Map | MultiReturn |
-	Struct | SumType
+	Struct | GenericStructInst | SumType
 
 pub enum Language {
 	v
@@ -41,6 +41,47 @@ pub enum TypeFlag {
 	optional
 	variadic
 	generic
+	shared_f
+	atomic_f
+}
+
+/*
+	To save precious TypeFlag bits the 4 possible ShareTypes are coded in the two
+	bits `shared` and `atomic_or_rw` (see sharetype_from_flags() below).
+*/
+
+pub enum ShareType {
+	mut_t
+	shared_t
+	atomic_t
+}
+
+pub fn (t ShareType) str() string {
+	match t {
+		.mut_t { return 'mut' }
+		.shared_t { return 'shared' }
+		.atomic_t { return 'atomic' }
+	}
+}
+
+// <atomic.h> defines special typenames
+pub fn (t Type) atomic_typename() string {
+	idx := t.idx()
+	match idx {
+		u32_type_idx { return 'atomic_uint' }
+		int_type_idx { return 'atomic_int' }
+		u64_type_idx { return 'atomic_ullong' }
+		i64_type_idx { return 'atomic_llong' }
+		else { return 'unknown_atomic' }
+	}
+}
+
+pub fn sharetype_from_flags(is_shared, is_atomic bool) ShareType {
+	return ShareType((int(is_atomic) << 1) | int(is_shared))
+}
+
+pub fn (t Type) share() ShareType {
+	return sharetype_from_flags(t.has_flag(.shared_f), t.has_flag(.atomic_f))
 }
 
 pub fn (types []Type) contains(typ Type) bool {
@@ -134,7 +175,7 @@ pub fn (t Type) derive(t_from Type) Type {
 [inline]
 pub fn new_type(idx int) Type {
 	if idx < 1 || idx > 65535 {
-		panic('new_type_id: idx must be between 1 & 65535')
+		panic('new_type: idx must be between 1 & 65535')
 	}
 	return idx
 }
@@ -215,9 +256,9 @@ pub const (
 	array_type_idx   = 20
 	map_type_idx     = 21
 	any_type_idx     = 22
-	t_type_idx       = 23
-	any_flt_type_idx = 24
-	any_int_type_idx = 25
+	// t_type_idx       = 23
+	any_flt_type_idx = 23
+	any_int_type_idx = 24
 )
 
 pub const (
@@ -267,7 +308,7 @@ pub const (
 	array_type   = new_type(array_type_idx)
 	map_type     = new_type(map_type_idx)
 	any_type     = new_type(any_type_idx)
-	t_type       = new_type(t_type_idx)
+	// t_type       = new_type(t_type_idx)
 	any_flt_type = new_type(any_flt_type_idx)
 	any_int_type = new_type(any_int_type_idx)
 )
@@ -321,6 +362,7 @@ pub enum Kind {
 	map
 	any
 	struct_
+	generic_struct_inst
 	multi_return
 	sum_type
 	alias
@@ -505,12 +547,12 @@ pub fn (mut t Table) register_builtin_type_symbols() {
 		name: 'any'
 		mod: 'builtin'
 	})
-	t.register_type_symbol({
-		kind: .any
-		name: 'T'
-		mod: 'builtin'
-		is_public: true
-	})
+	// t.register_type_symbol({
+	// 	kind: .any
+	// 	name: 'T'
+	// 	mod: 'builtin'
+	// 	is_public: true
+	// })
 	t.register_type_symbol({
 		kind: .any_float
 		name: 'any_float'
@@ -597,7 +639,10 @@ pub fn (k Kind) str() string {
 		.alias { 'alias' }
 		.enum_ { 'enum' }
 		.any { 'any' }
-		else { 'unknown' }
+		.function { 'function' }
+		.interface_ { 'interface' }
+		.ustring { 'ustring' }
+		.generic_struct_inst { 'generic_struct_inst' }
 	}
 	return k_str
 }
@@ -615,10 +660,18 @@ pub fn (kinds []Kind) str() string {
 
 pub struct Struct {
 pub mut:
-	fields      []Field
-	is_typedef  bool // C. [typedef]
-	is_union    bool
-	is_ref_only bool
+	fields        []Field
+	is_typedef    bool // C. [typedef]
+	is_union      bool
+	is_ref_only   bool
+	generic_types []Type
+}
+
+// instantiation of a generic struct
+pub struct GenericStructInst {
+pub mut:
+	parent_idx    int // idx of the base generic struct
+	generic_types []Type
 }
 
 pub struct Interface {
@@ -630,6 +683,7 @@ pub struct Enum {
 pub:
 	vals    []string
 	is_flag bool
+	is_multi_allowed bool
 }
 
 pub struct Alias {
@@ -715,6 +769,10 @@ pub fn (table &Table) type_to_str(t Type) string {
 		vals := res.split('.')
 		if vals.len > 2 {
 			res = vals[vals.len - 2] + '.' + vals[vals.len - 1]
+		}
+		if res.starts_with(table.cmod_prefix) ||
+			(sym.kind == .array && res.starts_with('[]' + table.cmod_prefix)) {
+			res = res.replace_once(table.cmod_prefix, '')
 		}
 		if sym.kind == .array && !res.starts_with('[]') {
 			res = '[]' + res

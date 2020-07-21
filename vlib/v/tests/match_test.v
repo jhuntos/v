@@ -62,6 +62,24 @@ fn test_match_integers() {
 	assert a == -2
 }
 
+fn test_match_multiple() {
+	assert match 9 {
+		1, 2, 3 { '1-3' }
+		4, 5 { '4-5' }
+		6...9 { '6-9' }
+		else { 'other' }
+	} == '6-9'
+}
+
+fn test_match_range() {
+	assert match `f` {
+		`0`...`9` { 'digit' }
+		`A`...`Z` { 'uppercase' }
+		`a`...`z` { 'lowercase' }
+		else { 'other' }
+	} == 'lowercase'
+}
+
 fn test_match_enums() {
 	mut b := Color.red
 	match b {
@@ -81,4 +99,30 @@ fn test_match_enums() {
 		}
 	}
 	assert b == .blue
+}
+
+type Sum = A1 | B1
+
+struct A1 {
+	pos int
+}
+struct B1 {
+	val string
+}
+
+fn f(s Sum) string {
+    match s {
+        A1 {
+            return typeof(s)
+        }
+        B1 {
+			return ''
+		}
+    }
+	return ''
+}
+
+fn test_sum_type_name() {
+	a := A1{pos: 22}
+	assert f(a) == 'A1'
 }

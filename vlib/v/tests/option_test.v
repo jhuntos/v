@@ -3,13 +3,20 @@ fn opt_err_with_code() ?string {
 }
 
 fn test_err_with_code() {
+	if w := opt_err_with_code() {
+		assert false
+		_ := w
+	} else {
+		assert err == 'hi'
+		assert errcode == 137
+	}
 	v := opt_err_with_code() or {
 		assert err == 'hi'
 		assert errcode == 137
 		return
 	}
 	assert false
-	println(v) // suppress not used error
+	_ := v
 }
 
 fn opt_err() ?string {
@@ -69,7 +76,7 @@ fn test_if_else_opt() {
 	if _ := err_call(false) {
 		assert false
 	} else {
-		assert true
+		assert err.len != 0
 	}
 }
 
@@ -150,12 +157,12 @@ fn test_or_return() {
 	if _ := or_return_error() {
 		assert false
 	} else {
-		assert true
+		assert err.len != 0
 	}
 	if _ := or_return_none() {
 		assert false
 	} else {
-		assert true
+		assert err.len == 0
 	}
 }
 
@@ -278,4 +285,53 @@ fn test_multi_return_opt() {
 fn test_optional_val_with_empty_or() {
 	ret_none() or {}
 	assert true
+}
+
+fn test_optional_void_return_types_of_anon_fn() {
+	f := fn(i int) ? {
+		if i == 0 {
+			return error("0")
+		}
+
+		return
+	}
+
+	f(0) or {
+		assert err == "0"
+		return
+	}
+}
+
+struct Foo {
+	f fn(int) ?
+}
+
+fn test_option_void_return_types_of_anon_fn_in_struct() {
+	foo := Foo {
+		f: fn(i int) ? {
+			if i == 0 {
+				return error("0")
+			}
+
+			return
+		}
+	}
+
+	foo.f(0) or {
+		assert err == "0"
+		return
+	}
+}
+
+fn get_string(param bool) ?string {
+	if param {
+		return 'Hello World'
+	}
+}
+
+fn test_option_auto_add_return_none() {
+	r := get_string(false) or {
+		'test'
+	}
+	assert r == 'test'
 }

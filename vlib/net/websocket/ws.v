@@ -19,7 +19,7 @@ pub struct Client {
 	// cwebsocket_subprotocol *subprotocol;
 	// cwebsocket_subprotocol *subprotocols[];
 mut:
-	lock       &sync.Mutex = sync.new_mutex()
+	mtx        &sync.Mutex = sync.new_mutex()
 	write_lock &sync.Mutex = sync.new_mutex()
 	state      State
 	socket     net.Socket
@@ -132,9 +132,9 @@ pub fn (mut ws Client) connect() int {
 			// do nothing
 		}
 	}
-	ws.lock.lock()
+	ws.mtx.m_lock()
 	ws.state = .connecting
-	ws.lock.unlock()
+	ws.mtx.unlock()
 	uri := ws.parse_uri()
 	nonce := get_nonce(ws.nonce_size)
 	seckey := base64.encode(nonce)
@@ -160,17 +160,17 @@ pub fn (mut ws Client) connect() int {
 	if ws.is_ssl {
 		ws.connect_ssl()
 	}
-	ws.lock.lock()
+	ws.mtx.m_lock()
 	ws.state = .connected
-	ws.lock.unlock()
+	ws.mtx.unlock()
 	res := ws.write_to_server(handshake.str, handshake.len)
 	if res <= 0 {
 		l.f('Handshake failed.')
 	}
 	ws.read_handshake(seckey)
-	ws.lock.lock()
+	ws.mtx.m_lock()
 	ws.state = .open
-	ws.lock.unlock()
+	ws.mtx.unlock()
 	ws.send_open_event()
 	unsafe {
 		handshake.free()
@@ -182,9 +182,9 @@ pub fn (mut ws Client) connect() int {
 
 pub fn (mut ws Client) close(code int, message string) {
 	if ws.state != .closed && ws.socket.sockfd > 1 {
-		ws.lock.lock()
+		ws.mtx.m_lock()
 		ws.state = .closing
-		ws.lock.unlock()
+		ws.mtx.unlock()
 		mut code32 := 0
 		if code > 0 {
 			code_ := C.htons(code)
@@ -223,9 +223,9 @@ pub fn (mut ws Client) close(code int, message string) {
 		}
 		ws.fragments = []
 		ws.send_close_event()
-		ws.lock.lock()
+		ws.mtx.m_lock()
 		ws.state = .closed
-		ws.lock.unlock()
+		ws.mtx.unlock()
 		unsafe {
 		}
 		// TODO impl autoreconnect
@@ -257,7 +257,9 @@ pub fn (mut ws Client) write(payload byteptr, payload_len int, code OPCode) int 
 	} else if payload_len > 125 && payload_len <= 0xffff {
 		len16 := C.htons(payload_len)
 		header[1] = (126 | 0x80)
-		C.memcpy(header.data + 2, &len16, 2)
+		unsafe {
+			C.memcpy(header.data + 2, &len16, 2)
+		}
 		header[4] = masking_key[0]
 		header[5] = masking_key[1]
 		header[6] = masking_key[2]
@@ -265,7 +267,9 @@ pub fn (mut ws Client) write(payload byteptr, payload_len int, code OPCode) int 
 	} else if payload_len > 0xffff && payload_len <= 0xffffffffffffffff { // 65535 && 18446744073709551615
 		len64 := htonl64(u64(payload_len))
 		header[1] = (127 | 0x80)
-		C.memcpy(header.data + 2, len64, 8)
+		unsafe {
+			C.memcpy(header.data + 2, len64, 8)
+		}
 		header[10] = masking_key[0]
 		header[11] = masking_key[1]
 		header[12] = masking_key[2]
@@ -276,8 +280,11 @@ pub fn (mut ws Client) write(payload byteptr, payload_len int, code OPCode) int 
 		goto free_data
 		return -1
 	}
-	C.memcpy(fbdata, header.data, header_len)
-	C.memcpy(fbdata + header_len, payload, payload_len)
+	unsafe
+	{
+		C.memcpy(fbdata, header.data, header_len)
+		C.memcpy(fbdata + header_len, payload, payload_len)
+	}
 	for i in 0 .. payload_len {
 		frame_buf[header_len + i] ^= masking_key[i % 4] & 0xff
 	}
@@ -320,7 +327,10 @@ pub fn (mut ws Client) read() int {
 	mut frame := Frame{}
 	mut frame_size := u64(header_len)
 	for bytes_read < frame_size && ws.state == .open {
-		byt := ws.read_from_server(data + int(bytes_read), 1)
+		mut byt := 0
+		unsafe {
+			byt = ws.read_from_server(data + int(bytes_read), 1)
+		}
 		match byt {
 			0 {
 				error := 'server closed the connection.'
@@ -375,7 +385,7 @@ pub fn (mut ws Client) read() int {
 			frame_size = u64(header_len) + payload_len
 			if frame_size > initial_buffer {
 				l.d('reallocating: ${frame_size}')
-				data = C.realloc(data, frame_size)
+				data = v_realloc(data, u32(frame_size))
 			}
 		} else if frame.payload_len == u64(127) && bytes_read == u64(extended_payload64_end_byte) {
 			header_len += 8 // TODO Not sure...
@@ -399,7 +409,7 @@ pub fn (mut ws Client) read() int {
 			frame_size = u64(header_len) + payload_len
 			if frame_size > initial_buffer {
 				l.d('reallocating: ${frame_size}')
-				data = C.realloc(data, frame_size)
+				data = v_realloc(data, u32(frame_size)) // TODO u64 => u32
 			}
 		}
 	}
@@ -420,7 +430,7 @@ pub fn (mut ws Client) read() int {
 		if payload == 0 {
 			l.f('out of memory')
 		}
-		C.memcpy(payload, &data[header_len], payload_len)
+		unsafe { C.memcpy(payload, &data[header_len], payload_len) }
 		if frame.fin {
 			if ws.fragments.len > 0 {
 				// join fragments
@@ -442,7 +452,9 @@ pub fn (mut ws Client) read() int {
 				}
 				mut by := 0
 				for f in frags {
-					C.memcpy(pl + by, f.data, f.len)
+					unsafe {
+						C.memcpy(pl + by, f.data, f.len)
+					}
 					by += int(f.len)
 					unsafe {
 						free(f.data)
@@ -467,7 +479,7 @@ pub fn (mut ws Client) read() int {
 					return -1
 				}
 			}
-			message := Message{
+			message := &Message{
 				opcode: frame.opcode
 				payload: payload
 				payload_len: int(payload_len)
@@ -510,7 +522,7 @@ pub fn (mut ws Client) read() int {
 		mut payload := []byte{}
 		if payload_len > 0 {
 			payload = [`0`].repeat(int(payload_len))
-			C.memcpy(payload.data, &data[header_len], payload_len)
+			unsafe { C.memcpy(payload.data, &data[header_len], payload_len) }
 		}
 		unsafe {
 			free(data)
@@ -589,7 +601,7 @@ fn (mut ws Client) send_control_frame(code OPCode, frame_typ string, payload []b
 	if code == .close {
 		if payload.len > 2 {
 			mut parsed_payload := [`0`].repeat(payload.len + 1)
-			C.memcpy(parsed_payload.data, &payload[0], payload.len)
+			unsafe { C.memcpy(parsed_payload.data, &payload[0], payload.len) }
 			parsed_payload[payload.len] = `\0`
 			for i in 0 .. payload.len {
 				control_frame[6 + i] = (parsed_payload[i] ^ masking_key[i % 4]) & 0xff

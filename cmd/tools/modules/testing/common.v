@@ -1,6 +1,7 @@
 module testing
 
 import os
+import time
 import term
 import benchmark
 import sync
@@ -28,7 +29,7 @@ pub mut:
 }
 
 pub fn (mut mh TestMessageHandler) append_message(msg string) {
-	mh.mtx.lock()
+	mh.mtx.m_lock()
 	mh.messages << msg
 	mh.mtx.unlock()
 }
@@ -59,8 +60,16 @@ pub fn (mut ts TestSession) init() {
 }
 
 pub fn (mut ts TestSession) test() {
+	// Ensure that .tmp.c files generated from compiling _test.v files,
+	// are easy to delete at the end, *without* affecting the existing ones.
+	now := time.sys_mono_now()
+	new_vtmp_dir := os.join_path(os.temp_dir(), 'v', 'test_session_$now')
+	os.mkdir_all(new_vtmp_dir)
+	os.setenv('VTMP', new_vtmp_dir, true)
+	//
 	ts.init()
 	mut remaining_files := []string{}
+	vtest_only := os.getenv('VTEST_ONLY').split(',')
 	for dot_relative_file in ts.files {
 		relative_file := dot_relative_file.replace('./', '')
 		file := os.real_path(relative_file)
@@ -84,6 +93,18 @@ pub fn (mut ts TestSession) test() {
 				continue
 			}
 		}
+		if vtest_only.len > 0 {
+			mut found := 0
+			for substring in vtest_only {
+				if file.contains(substring) {
+					found++
+					break
+				}
+			}
+			if found == 0 {
+				continue
+			}
+		}
 		remaining_files << dot_relative_file
 	}
 	ts.files = remaining_files
@@ -96,21 +117,17 @@ pub fn (mut ts TestSession) test() {
 		mtx: sync.new_mutex()
 	}
 	pool_of_test_runners.set_shared_context(ts)
-	$if msvc {
-		// NB: MSVC can not be launched in parallel, without giving it
-		// the option /FS because it uses a shared PDB file, which should
-		// be locked, but that makes writing slower...
-		// See: https://docs.microsoft.com/en-us/cpp/build/reference/fs-force-synchronous-pdb-writes?view=vs-2019
-		// Instead, just run tests on 1 core for now.
-		pool_of_test_runners.set_max_jobs(1)
-	}
 	pool_of_test_runners.work_on_pointers(remaining_files.pointers())
 	ts.benchmark.stop()
 	eprintln(term.h_divider('-'))
+	// cleanup generated .tmp.c files after successfull tests:
+	if ts.benchmark.nfail == 0 {
+		os.rmdir_all(new_vtmp_dir)
+	}
 }
 
 pub fn (mut m TestMessageHandler) display_message() {
-	m.mtx.lock()
+	m.mtx.m_lock()
 	defer {
 		m.messages.clear()
 		m.mtx.unlock()
@@ -217,7 +234,7 @@ pub fn v_build_failing(zargs string, folder string) bool {
 	return v_build_failing_skipped(zargs, folder, [])
 }
 
-pub fn v_build_failing_skipped(zargs string, folder string, skipped []string) bool {
+pub fn v_build_failing_skipped(zargs string, folder string, oskipped []string) bool {
 	main_label := 'Building $folder ...'
 	finish_label := 'building $folder'
 	vexe := pref.vexe_path()
@@ -229,6 +246,7 @@ pub fn v_build_failing_skipped(zargs string, folder string, skipped []string) bo
 	mut session := new_test_session(vargs)
 	files := os.walk_ext(os.join_path(parent_dir, folder), '.v')
 	mut mains := []string{}
+	mut skipped := oskipped
 	for f in files {
 		if !f.contains('modules') && !f.contains('preludes') {
 			//$if !linux {
@@ -247,6 +265,13 @@ pub fn v_build_failing_skipped(zargs string, folder string, skipped []string) bo
 				if f.ends_with('examples\\pico\\pico.v') {
 					continue
 				}
+			}
+			c := os.read_file(f) or { panic(err) }
+			maxc := if c.len > 300 { 300 } else { c.len }
+			start := c[0..maxc]
+			if start.contains('module ') && !start.contains('module main') {
+				skipped_f := f.replace(os.join_path(parent_dir,''), '')
+				skipped << skipped_f
 			}
 			mains << f
 		}

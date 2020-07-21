@@ -13,7 +13,7 @@ pub fn (mut p Parser) parse_array_type() table.Type {
 		p.next()
 		p.check(.rsbr)
 		elem_type := p.parse_type()
-		//sym := p.table.get_type_symbol(elem_type)
+		// sym := p.table.get_type_symbol(elem_type)
 		idx := p.table.find_or_register_array_fixed(elem_type, size, 1)
 		return table.new_type(idx)
 	}
@@ -21,10 +21,8 @@ pub fn (mut p Parser) parse_array_type() table.Type {
 	p.check(.rsbr)
 	elem_type := p.parse_type()
 	mut nr_dims := 1
-
 	// detect attr
 	not_attr := p.peek_tok.kind != .name && p.peek_tok2.kind !in [.semicolon, .rsbr]
-
 	for p.tok.kind == .lsbr && not_attr {
 		p.next()
 		p.check(.rsbr)
@@ -75,7 +73,7 @@ pub fn (mut p Parser) parse_fn_type(name string) table.Type {
 	// p.warn('parse fn')
 	p.check(.key_fn)
 	line_nr := p.tok.line_nr
-	args, is_variadic := p.fn_args()
+	args, _, is_variadic := p.fn_args()
 	mut return_type := table.void_type
 	if p.tok.line_nr == line_nr && p.tok.kind.is_start_of_type() {
 		return_type = p.parse_type()
@@ -98,15 +96,41 @@ pub fn (mut p Parser) parse_type_with_mut(is_mut bool) table.Type {
 	return typ
 }
 
+// Parses any language indicators on a type.
+pub fn (mut p Parser) parse_language() table.Language {
+	language := if p.tok.lit == 'C' {
+		table.Language.c
+	} else if p.tok.lit == 'JS' {
+		table.Language.js
+	} else {
+		table.Language.v
+	}
+	if language != .v {
+		p.next()
+		p.check(.dot)
+	}
+	return language
+}
+
 pub fn (mut p Parser) parse_type() table.Type {
 	// optional
 	mut is_optional := false
 	if p.tok.kind == .question {
+		line_nr := p.tok.line_nr
 		p.next()
 		is_optional = true
+		if p.tok.line_nr > line_nr {
+			mut typ := table.void_type
+			if is_optional {
+				typ = typ.set_flag(.optional)
+			}
+			return typ
+		}
 	}
+	is_shared := p.tok.kind == .key_shared
+	is_atomic := p.tok.kind == .key_atomic
 	mut nr_muls := 0
-	if p.tok.kind == .key_mut {
+	if p.tok.kind == .key_mut || is_shared || is_atomic {
 		nr_muls++
 		p.next()
 	}
@@ -115,19 +139,7 @@ pub fn (mut p Parser) parse_type() table.Type {
 		nr_muls++
 		p.next()
 	}
-
-	language := if p.tok.lit == 'C' {
-		table.Language.c
-	} else if p.tok.lit == 'JS' {
-		table.Language.js
-	} else {
-		table.Language.v
-	}
-
-	if language != .v {
-		p.next()
-		p.check(.dot)
-	}
+	language := p.parse_language()
 	mut typ := table.void_type
 	if p.tok.kind != .lcbr {
 		pos := p.tok.position()
@@ -138,6 +150,12 @@ pub fn (mut p Parser) parse_type() table.Type {
 	}
 	if is_optional {
 		typ = typ.set_flag(.optional)
+	}
+	if is_shared {
+		typ = typ.set_flag(.shared_f)
+	}
+	if is_atomic {
+		typ = typ.set_flag(.atomic_f)
 	}
 	if nr_muls > 0 {
 		typ = typ.set_nr_muls(nr_muls)
@@ -167,7 +185,7 @@ pub fn (mut p Parser) parse_any_type(language table.Language, is_ptr bool) table
 		name = '${p.imports[name]}.$p.tok.lit'
 	} else if p.expr_mod != '' {
 		name = p.expr_mod + '.' + name
-	} else if p.mod !in ['builtin', 'main'] && name !in table.builtin_type_names  && name.len > 1 {
+	} else if p.mod != 'builtin' && name !in p.table.type_idxs && name.len > 1 {
 		// `Foo` in module `mod` means `mod.Foo`
 		name = p.mod + '.' + name
 	}
@@ -246,18 +264,82 @@ pub fn (mut p Parser) parse_any_type(language table.Language, is_ptr bool) table
 					return table.bool_type
 				}
 				else {
-					// struct / enum / placeholder
-					// struct / enum
-					mut idx := p.table.find_type_idx(name)
-					if idx > 0 {
-						return table.new_type(idx)
+					if name.len == 1 && name[0].is_capital() {
+						return p.parse_generic_template_type(name)
 					}
-					// not found - add placeholder
-					idx = p.table.add_placeholder_type(name)
-					// println('NOT FOUND: $name - adding placeholder - $idx')
-					return table.new_type(idx)
+					if p.peek_tok.kind == .lt {
+						return p.parse_generic_struct_inst_type(name)
+					}
+					return p.parse_enum_or_struct_type(name)
 				}
 			}
 		}
 	}
+}
+
+pub fn (mut p Parser) parse_enum_or_struct_type(name string) table.Type {
+	// struct / enum / placeholder
+	// struct / enum
+	mut idx := p.table.find_type_idx(name)
+	if idx > 0 {
+		return table.new_type(idx)
+	}
+	// not found - add placeholder
+	idx = p.table.add_placeholder_type(name)
+	// println('NOT FOUND: $name - adding placeholder - $idx')
+	return table.new_type(idx)
+}
+
+pub fn (mut p Parser) parse_generic_template_type(name string) table.Type {
+	mut idx := p.table.find_type_idx(name)
+	if idx > 0 {
+		return table.new_type(idx).set_flag(.generic)
+	}
+	idx = p.table.register_type_symbol(table.TypeSymbol{
+		name: name
+		kind: .any
+		is_public: true
+	})
+	return table.new_type(idx).set_flag(.generic)
+}
+
+pub fn (mut p Parser) parse_generic_struct_inst_type(name string) table.Type {
+	mut bs_name := name
+	p.next()
+	bs_name += '<'
+	mut generic_types := []table.Type{}
+	mut is_instance := false
+	for {
+		gt := p.parse_type()
+		if !gt.has_flag(.generic) {
+			is_instance = true
+		}
+		gts := p.table.get_type_symbol(gt)
+		bs_name += gts.name
+		generic_types << gt
+		if p.tok.kind != .comma {
+			break
+		}
+		p.next()
+		bs_name += ','
+	}
+	p.check(.gt)
+	bs_name += '>'
+	if is_instance && generic_types.len > 0 {
+		mut gt_idx := p.table.find_type_idx(bs_name)
+		if gt_idx > 0 {
+			return table.new_type(gt_idx)
+		}
+		gt_idx = p.table.add_placeholder_type(bs_name)
+		idx := p.table.register_type_symbol(table.TypeSymbol{
+			kind: .generic_struct_inst
+			name: bs_name
+			info: table.GenericStructInst{
+				parent_idx: p.table.type_idxs[name]
+				generic_types: generic_types
+			}
+		})
+		return table.new_type(idx)
+	}
+	return p.parse_enum_or_struct_type(name)
 }

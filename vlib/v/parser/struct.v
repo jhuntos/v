@@ -33,17 +33,33 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 		p.next() // .
 	}
 	is_typedef := 'typedef' in p.attrs
-	no_body := p.peek_tok.kind != .lcbr
+	name_pos := p.tok.position()
+	mut name := p.check_name()
+	if name.len == 1 && name[0].is_capital() {
+		p.error_with_pos('single letter capital names are reserved for generic template types.',
+			name_pos)
+	}
+	mut generic_types := []table.Type{}
+	if p.tok.kind == .lt {
+		p.next()
+		for {
+			generic_types << p.parse_type()
+			if p.tok.kind != .comma {
+				break
+			}
+			p.next()
+		}
+		p.check(.gt)
+	}
+	no_body := p.tok.kind != .lcbr
 	if language == .v && no_body {
 		p.error('`$p.tok.lit` lacks body')
 	}
-	end_pos := p.tok.position()
-	mut name := p.check_name()
 	if language == .v && p.mod != 'builtin' && name.len > 0 && !name[0].is_capital() {
-		p.error_with_pos('struct name `$name` must begin with capital letter', end_pos)
+		p.error_with_pos('struct name `$name` must begin with capital letter', name_pos)
 	}
 	if name.len == 1 {
-		p.error_with_pos('struct names must have more than one character', end_pos)
+		p.error_with_pos('struct names must have more than one character', name_pos)
 	}
 	// println('struct decl $name')
 	mut ast_fields := []ast.StructField{}
@@ -215,6 +231,7 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 			is_typedef: is_typedef
 			is_union: is_union
 			is_ref_only: 'ref_only' in p.attrs
+			generic_types: generic_types
 		}
 		mod: p.mod
 		is_public: is_pub
@@ -229,14 +246,15 @@ fn (mut p Parser) struct_decl() ast.StructDecl {
 		ret = p.table.register_type_symbol(t)
 	}
 	if ret == -1 {
-		p.error('cannot register type `$name`, another type with this name exists')
+		p.error_with_pos('cannot register struct `$name`, another type with this name exists',
+			name_pos)
 	}
 	p.expr_mod = ''
 	return ast.StructDecl{
 		name: name
 		is_pub: is_pub
 		fields: ast_fields
-		pos: start_pos.extend(end_pos)
+		pos: start_pos.extend(name_pos)
 		mut_pos: mut_pos
 		pub_pos: pub_pos
 		pub_mut_pos: pub_mut_pos
@@ -263,7 +281,7 @@ fn (mut p Parser) struct_init(short_syntax bool) ast.StructInit {
 	saved_is_amp := p.is_amp
 	p.is_amp = false
 	for p.tok.kind != .rcbr && p.tok.kind != .rpar {
-		p.check_comment()
+		comment := p.check_comment()
 		mut field_name := ''
 		if no_keys {
 			expr := p.expr(0)
@@ -271,6 +289,7 @@ fn (mut p Parser) struct_init(short_syntax bool) ast.StructInit {
 			fields << ast.StructInitField{
 				expr: expr
 				pos: expr.position()
+				comment: comment
 			}
 		} else {
 			first_field_pos := p.tok.position()
@@ -321,31 +340,41 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 		p.next()
 	}
 	p.next() // `interface`
+	name_pos := p.tok.position()
 	interface_name := p.prepend_mod(p.check_name())
 	// println('interface decl $interface_name')
 	p.check(.lcbr)
 	// Declare the type
-	t := table.TypeSymbol{
+	reg_idx := p.table.register_type_symbol(table.TypeSymbol{
 		kind: .interface_
 		name: interface_name
 		mod: p.mod
 		info: table.Interface{
 			types: []
 		}
+	})
+	if reg_idx == -1 {
+		p.error_with_pos('cannot register interface `$interface_name`, another type with this name exists',
+			name_pos)
 	}
-	typ := table.new_type(p.table.register_type_symbol(t))
-	ts := p.table.get_type_symbol(typ) // TODO t vs ts
+	typ := table.new_type(reg_idx)
+	ts := p.table.get_type_symbol(typ)
+	// if methods were declared before, it's an error, ignore them
+	ts.methods.clear()
 	// Parse methods
 	mut methods := []ast.FnDecl{}
 	for p.tok.kind != .rcbr && p.tok.kind != .eof {
 		method_start_pos := p.tok.position()
 		line_nr := p.tok.line_nr
 		name := p.check_name()
+		if ts.has_method(name) {
+			p.error_with_pos('duplicate method `$name`', method_start_pos)
+		}
 		if util.contains_capital(name) {
 			p.error('interface methods cannot contain uppercase letters, use snake_case instead')
 		}
 		// field_names << name
-		args2, _ := p.fn_args() // TODO merge table.Arg and ast.Arg to avoid this
+		args2, _, _ := p.fn_args() // TODO merge table.Arg and ast.Arg to avoid this
 		mut args := [table.Arg{
 			name: 'x'
 			typ: typ
@@ -378,6 +407,7 @@ fn (mut p Parser) interface_decl() ast.InterfaceDecl {
 	return ast.InterfaceDecl{
 		name: interface_name
 		methods: methods
+		is_pub: is_pub
 		pos: start_pos
 	}
 }
