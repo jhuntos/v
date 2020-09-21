@@ -12,6 +12,7 @@ for the current state of V***
 	* [Weaknesses](#weaknesses)
 	* [Compatibility](#compatibility)
 	* [Automatic Lock](#automatic-lock)
+	* [Channels](#channels)
 
 ## Concurrency
 

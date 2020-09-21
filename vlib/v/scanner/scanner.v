@@ -44,7 +44,7 @@ pub mut:
 	is_fmt                      bool // Used only for skipping ${} in strings, since we need literal
 	// string values when generating formatted code.
 	comments_mode               CommentsMode
-	is_inside_toplvl_statement  bool = false // *only* used in comments_mode: .toplevel_comments, toggled by parser
+	is_inside_toplvl_statement  bool          // *only* used in comments_mode: .toplevel_comments, toggled by parser
 	all_tokens                  []token.Token // *only* used in comments_mode: .toplevel_comments, contains all tokens
 	tidx                        int
 	eofs                        int
@@ -120,7 +120,7 @@ pub fn new_scanner(text string, comments_mode CommentsMode, pref &pref.Preferenc
 
 pub fn new_vet_scanner(text string, comments_mode CommentsMode, pref &pref.Preferences, vet_errors &[]string) &Scanner {
 	is_fmt := pref.is_fmt
-	s := &Scanner{
+	mut s := &Scanner{
 		pref: pref
 		text: text
 		is_print_line_on_error: true
@@ -130,6 +130,7 @@ pub fn new_vet_scanner(text string, comments_mode CommentsMode, pref &pref.Prefe
 		comments_mode: comments_mode
 		vet_errors: vet_errors
 	}
+	s.file_path = 'internal_memory'
 	return s
 }
 
@@ -322,7 +323,7 @@ fn filter_num_sep(txt byteptr, start, end int) string {
 			}
 		}
 		b[i1] = 0 // C string compatibility
-		return string(b)
+		return b.vstring_with_len(i1)
 	}
 }
 
@@ -337,6 +338,9 @@ fn (mut s Scanner) ident_bin_number() string {
 	}
 	for s.pos < s.text.len {
 		c := s.text[s.pos]
+		if c == num_sep && s.text[s.pos + 1] == num_sep {
+			s.error('cannot use `_` consecutively')
+		}
 		if !c.is_bin_digit() && c != num_sep {
 			if (!c.is_digit() && !c.is_letter()) || s.is_inside_string {
 				break
@@ -348,7 +352,10 @@ fn (mut s Scanner) ident_bin_number() string {
 		}
 		s.pos++
 	}
-	if start_pos + 2 == s.pos {
+	if s.text[s.pos - 1] == num_sep {
+		s.error('cannot use `_` at the end of a numeric literal')
+	}
+	else if start_pos + 2 == s.pos {
 		s.pos-- // adjust error position
 		s.error('number part of this binary is not provided')
 	} else if has_wrong_digit {
@@ -371,6 +378,9 @@ fn (mut s Scanner) ident_hex_number() string {
 	}
 	for s.pos < s.text.len {
 		c := s.text[s.pos]
+		if c == num_sep && s.text[s.pos + 1] == num_sep {
+			s.error('cannot use `_` consecutively')
+		}
 		if !c.is_hex_digit() && c != num_sep {
 			if !c.is_letter() || s.is_inside_string {
 				break
@@ -382,7 +392,10 @@ fn (mut s Scanner) ident_hex_number() string {
 		}
 		s.pos++
 	}
-	if start_pos + 2 == s.pos {
+	if s.text[s.pos - 1] == num_sep {
+		s.error('cannot use `_` at the end of a numeric literal')
+	}
+	else if start_pos + 2 == s.pos {
 		s.pos-- // adjust error position
 		s.error('number part of this hexadecimal is not provided')
 	} else if has_wrong_digit {
@@ -405,6 +418,9 @@ fn (mut s Scanner) ident_oct_number() string {
 	}
 	for s.pos < s.text.len {
 		c := s.text[s.pos]
+		if c == num_sep && s.text[s.pos + 1] == num_sep {
+			s.error('cannot use `_` consecutively')
+		}
 		if !c.is_oct_digit() && c != num_sep {
 			if (!c.is_digit() && !c.is_letter()) || s.is_inside_string {
 				break
@@ -416,7 +432,10 @@ fn (mut s Scanner) ident_oct_number() string {
 		}
 		s.pos++
 	}
-	if start_pos + 2 == s.pos {
+	if s.text[s.pos - 1] == num_sep {
+		s.error('cannot use `_` at the end of a numeric literal')
+	}
+	else if start_pos + 2 == s.pos {
 		s.pos-- // adjust error position
 		s.error('number part of this octal is not provided')
 	} else if has_wrong_digit {
@@ -436,6 +455,9 @@ fn (mut s Scanner) ident_dec_number() string {
 	// scan integer part
 	for s.pos < s.text.len {
 		c := s.text[s.pos]
+		if c == num_sep && s.text[s.pos + 1]  == num_sep {
+			s.error('cannot use `_` consecutively')
+		}
 		if !c.is_digit() && c != num_sep {
 			if !c.is_letter() || c in [`e`, `E`] || s.is_inside_string {
 				break
@@ -447,9 +469,11 @@ fn (mut s Scanner) ident_dec_number() string {
 		}
 		s.pos++
 	}
+	if s.text[s.pos - 1] == num_sep {
+		s.error('cannot use `_` at the end of a numeric literal')
+	}
 	mut call_method := false // true for, e.g., 5.str(), 5.5.str(), 5e5.str()
 	mut is_range := false // true for, e.g., 5..10
-	mut is_float_without_fraction := false // true for, e.g. 5.
 	// scan fractional part
 	if s.pos < s.text.len && s.text[s.pos] == `.` {
 		s.pos++
@@ -483,10 +507,8 @@ fn (mut s Scanner) ident_dec_number() string {
 				// 5.str()
 				call_method = true
 				s.pos--
-			} else if s.text[s.pos] != `)` {
+			} else {
 				// 5.
-				is_float_without_fraction = true
-				s.pos--
 			}
 		}
 	}
@@ -525,7 +547,7 @@ fn (mut s Scanner) ident_dec_number() string {
 		s.pos-- // adjust error position
 		s.error('exponent has no digits')
 	} else if s.pos < s.text.len &&
-		s.text[s.pos] == `.` && !is_range && !is_float_without_fraction && !call_method {
+		s.text[s.pos] == `.` && !is_range && !call_method {
 		// error check: 1.23.4, 123.e+3.4
 		if has_exp {
 			s.error('exponential part should be integer')
@@ -703,7 +725,11 @@ fn (mut s Scanner) text_scan() token.Token {
 			}
 			// end of `$expr`
 			// allow `'$a.b'` and `'$a.c()'`
-			if s.is_inter_start && next_char != `.` && next_char != `(` {
+			if s.is_inter_start && next_char == `(` {
+				if s.look_ahead(2) != `)` {
+					s.warn('use e.g. `\${f(expr)}` or `\$name\\(` instead of `\$f(expr)`')
+				}
+			} else if s.is_inter_start && next_char != `.` {
 				s.is_inter_end = true
 				s.is_inter_start = false
 			}
@@ -919,7 +945,7 @@ fn (mut s Scanner) text_scan() token.Token {
 				}
 				if name == 'VMOD_FILE' {
 					if s.vmod_file_content.len == 0 {
-						mcache := vmod.get_cache()
+						mut mcache := vmod.get_cache()
 						vmod_file_location := mcache.get_by_file(s.file_path)
 						if vmod_file_location.vmod_file.len == 0 {
 							s.error('@VMOD_FILE can be used only in projects, that have v.mod file')
@@ -1015,6 +1041,9 @@ fn (mut s Scanner) text_scan() token.Token {
 					}
 					s.pos++
 					return s.new_token(.left_shift, '', 2)
+				} else if nextc == `-` {
+					s.pos++
+					return s.new_token(.arrow, '', 2)
 				} else {
 					return s.new_token(.lt, '', 1)
 				}
@@ -1023,9 +1052,6 @@ fn (mut s Scanner) text_scan() token.Token {
 				if nextc == `=` {
 					s.pos++
 					return s.new_token(.eq, '', 2)
-				} else if nextc == `>` {
-					s.pos++
-					return s.new_token(.arrow, '', 2)
 				} else {
 					return s.new_token(.assign, '', 1)
 				}
@@ -1066,10 +1092,14 @@ fn (mut s Scanner) text_scan() token.Token {
 				if nextc == `/` {
 					start := s.pos + 1
 					s.ignore_line()
-					comment_line_end := s.pos
-					s.pos--
-					// fix line_nr, \n was read; the comment is marked on the next line
-					s.line_nr--
+					mut comment_line_end := s.pos
+					if s.text[s.pos-1] == `\r` {
+						comment_line_end--
+					} else {
+						// fix line_nr, \n was read; the comment is marked on the next line
+						s.pos--
+						s.line_nr--
+					}
 					if s.should_parse_comment() {
 						s.line_comment = s.text[start + 1..comment_line_end]
 						mut comment := s.line_comment.trim_space()
@@ -1186,26 +1216,27 @@ fn (mut s Scanner) ident_string() string {
 		}
 		// Don't allow \0
 		if c == `0` && s.pos > 2 && s.text[s.pos - 1] == slash {
-			if s.pos < s.text.len - 1 && s.text[s.pos + 1].is_digit() {
-			} else if !is_cstr {
+			if (s.pos < s.text.len - 1 && s.text[s.pos + 1].is_digit()) || s.count_symbol_before(s.pos - 1, slash) % 2 == 0 {
+			} else if !is_cstr && !is_raw {
 				s.error('0 character in a string literal')
 			}
 		}
 		// Don't allow \x00
 		if c == `0` && s.pos > 5 && s.expect('\\x0', s.pos - 3) {
-			if !is_cstr {
+			if s.count_symbol_before(s.pos - 3, slash) % 2 == 0 {
+			} else if !is_cstr && !is_raw {
 				s.error('0 character in a string literal')
 			}
 		}
 		// ${var} (ignore in vfmt mode)
-		if c == `{` && prevc == `$` && !is_raw && s.count_symbol_before(s.pos - 2, slash) % 2 == 0 {
+		if prevc == `$` && c == `{` && !is_raw && s.count_symbol_before(s.pos - 2, slash) % 2 == 0 {
 			s.is_inside_string = true
 			// so that s.pos points to $ at the next step
 			s.pos -= 2
 			break
 		}
 		// $var
-		if util.is_name_char(c) && prevc == `$` && !is_raw &&
+		if prevc == `$` && util.is_name_char(c) && !is_raw &&
 			s.count_symbol_before(s.pos - 2, slash) % 2 == 0 {
 			s.is_inside_string = true
 			s.is_inter_start = true
@@ -1350,6 +1381,14 @@ fn (mut s Scanner) inc_line_number() {
 	}
 }
 
+pub fn (s &Scanner) warn(msg string) {
+	pos := token.Position{
+		line_nr: s.line_nr
+		pos: s.pos
+	}
+	eprintln(util.formatted_error('warning:', msg, s.file_path, pos))
+}
+
 pub fn (s &Scanner) error(msg string) {
 	pos := token.Position{
 		line_nr: s.line_nr
@@ -1360,7 +1399,12 @@ pub fn (s &Scanner) error(msg string) {
 }
 
 fn (mut s Scanner) vet_error(msg string) {
-	s.vet_errors << '$s.file_path:$s.line_nr: $msg'
+	eline := '$s.file_path:$s.line_nr: $msg'
+	if s.vet_errors == 0 {
+		eprintln(eline)
+		return
+	}
+	s.vet_errors << eline
 }
 
 pub fn verror(s string) {

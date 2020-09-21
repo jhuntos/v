@@ -1,6 +1,6 @@
 /*
 
-regex 0.9e
+regex 0.9g
 
 Copyright (c) 2019-2020 Dario Deledda. All rights reserved.
 Use of this source code is governed by an MIT license
@@ -19,7 +19,7 @@ module regex
 import strings
 
 pub const(
-	v_regex_version = "0.9e"      // regex module version
+	v_regex_version = "0.9g"      // regex module version
 
 	max_code_len     = 256        // default small base code len for the regex programs
 	max_quantifier   = 1073741824 // default max repetitions allowed for the quantifiers = 2^30
@@ -90,18 +90,19 @@ fn utf8util_char_len(b byte) int {
 // get_char get a char from position i and return an u32 with the unicode code
 [inline]
 fn (re RE) get_char(in_txt string, i int) (u32,int) {
+	ini := unsafe {in_txt.str[i]}
 	// ascii 8 bit
 	if (re.flag & f_bin) !=0 ||
-		in_txt.str[i] & 0x80 == 0
+		ini & 0x80 == 0
 	{
-		return u32(in_txt.str[i]), 1
+		return u32(ini), 1
 	}
 	// unicode char
-	char_len := utf8util_char_len(in_txt.str[i])
+	char_len := utf8util_char_len(ini)
 	mut tmp := 0
 	mut ch := u32(0)
 	for tmp < char_len {
-		ch = (ch << 8) | in_txt.str[i+tmp]
+		ch = (ch << 8) | unsafe {in_txt.str[i+tmp]}
 		tmp++
 	}
 	return ch,char_len
@@ -112,16 +113,16 @@ fn (re RE) get_char(in_txt string, i int) (u32,int) {
 fn (re RE) get_charb(in_txt byteptr, i int) (u32,int) {
 	// ascii 8 bit
 	if (re.flag & f_bin) !=0 ||
-		in_txt[i] & 0x80 == 0
+		unsafe {in_txt[i]} & 0x80 == 0
 	{
-		return u32(in_txt[i]), 1
+		return u32(unsafe {in_txt[i]}), 1
 	}
 	// unicode char
-	char_len := utf8util_char_len(in_txt[i])
+	char_len := utf8util_char_len(unsafe {in_txt[i]})
 	mut tmp := 0
 	mut ch := u32(0)
 	for tmp < char_len {
-		ch = (ch << 8) | in_txt[i+tmp]
+		ch = (ch << 8) | unsafe {in_txt[i+tmp]}
 		tmp++
 	}
 	return ch,char_len
@@ -206,7 +207,7 @@ pub fn (re RE) get_parse_error_string(err int) string {
 
 // utf8_str convert and utf8 sequence to a printable string
 [inline]
-fn utf8_str(ch u32) string {
+fn utf8_str(ch rune) string {
 	mut i := 4
 	mut res := ""
 	for i > 0 {
@@ -232,33 +233,33 @@ fn simple_log(txt string) {
 pub type FnValidator fn (byte) bool
 struct Token{
 mut:
-	ist u32 = u32(0)
+	ist rune
 
 	// char
-	ch u32                 = u32(0)  // char of the token if any
-	ch_len byte            = byte(0) // char len
+	ch rune   // char of the token if any
+	ch_len byte             // char len
 
 	// Quantifiers / branch
-	rep_min         int    = 0     // used also for jump next in the OR branch [no match] pc jump
-	rep_max         int    = 0     // used also for jump next in the OR branch [   match] pc jump
-	greedy          bool   = false // greedy quantifier flag
+	rep_min         int         // used also for jump next in the OR branch [no match] pc jump
+	rep_max         int         // used also for jump next in the OR branch [   match] pc jump
+	greedy          bool    // greedy quantifier flag
 
 	// Char class
 	cc_index        int    = -1
 
 	// counters for quantifier check (repetitions)
-	rep             int    = 0
+	rep             int
 
 	// validator function pointer
 	validator FnValidator
 
 	// groups variables
-	group_rep          int = 0     // repetition of the group
+	group_rep          int      // repetition of the group
 	group_id           int = -1    // id of the group
 	goto_pc            int = -1    // jump to this PC if is needed
 
 	// OR flag for the token
-	next_is_or bool        = false // true if the next token is an OR
+	next_is_or bool        // true if the next token is an OR
 }
 
 [inline]
@@ -301,7 +302,7 @@ pub mut:
 
 	// char classes storage
 	cc []CharClass             // char class list
-	cc_index int         = 0   // index
+	cc_index int               // index
 
 	// state index
 	state_stack_index int= -1
@@ -309,7 +310,7 @@ pub mut:
 
 
 	// groups
-	group_count int      = 0   // number of groups in this regex struct
+	group_count int        // number of groups in this regex struct
 	groups []int               // groups index results
 	group_max_nested int = 3   // max nested group
 	group_max int        = 8   // max allowed number of different groups
@@ -320,12 +321,12 @@ pub mut:
 	group_map map[string]int   // groups names map
 
 	// flags
-	flag int             = 0   // flag for optional parameters
+	flag int                   // flag for optional parameters
 
 	// Debug/log
-	debug int            = 0           // enable in order to have the unroll of the code 0 = NO_DEBUG, 1 = LIGHT 2 = VERBOSE
+	debug int                          // enable in order to have the unroll of the code 0 = NO_DEBUG, 1 = LIGHT 2 = VERBOSE
 	log_func FnLog       = simple_log  // log function, can be customized by the user
-	query string         = ""          // query string
+	query string                   // query string
 }
 
 // Reset RE object
@@ -379,7 +380,7 @@ Backslashes chars
 
 */
 struct BslsStruct {
-	ch u32                   // meta char
+	ch rune                   // meta char
 	validator FnValidator    // validator function pointer
 }
 
@@ -465,8 +466,8 @@ const(
 struct CharClass {
 mut:
 	cc_type int = cc_null      // type of cc token
-	ch0 u32     = u32(0)       // first char of the interval a-b  a in this case
-	ch1 u32     = u32(0)	   // second char of the interval a-b b in this case
+	ch0 rune       // first char of the interval a-b  a in this case
+	ch1 rune	   // second char of the interval a-b b in this case
 	validator FnValidator      // validator function pointer
 }
 
@@ -488,15 +489,19 @@ fn (re RE) get_char_class(pc int) string {
 	for cc_i >= 0 && cc_i < re.cc.len && re.cc[cc_i].cc_type != cc_end {
 
 		if re.cc[cc_i].cc_type == cc_bsls {
-			buf_ptr[i++] = `\\`
-			buf_ptr[i++] = byte(re.cc[cc_i].ch0)
+			unsafe {
+				buf_ptr[i++] = `\\`
+				buf_ptr[i++] = byte(re.cc[cc_i].ch0)
+			}
 		}
 		else if re.cc[cc_i].ch0 == re.cc[cc_i].ch1 {
 			tmp = 3
 			for tmp >= 0 {
 				x := byte((re.cc[cc_i].ch0 >> (tmp*8)) & 0xFF)
 				if x != 0 {
-					buf_ptr[i++] = x
+					unsafe {
+						buf_ptr[i++] = x
+					}
 				}
 				tmp--
 			}
@@ -506,28 +511,36 @@ fn (re RE) get_char_class(pc int) string {
 			for tmp >= 0 {
 				x := byte((re.cc[cc_i].ch0 >> (tmp*8)) & 0xFF)
 				if x != 0 {
-					buf_ptr[i++] = x
+					unsafe {
+						buf_ptr[i++] = x
+					}
 				}
 				tmp--
 			}
-			buf_ptr[i++] = `-`
+			unsafe {
+				buf_ptr[i++] = `-`
+			}
 			tmp = 3
 			for tmp >= 0 {
 				x := byte((re.cc[cc_i].ch1 >> (tmp*8)) & 0xFF)
 				if x != 0 {
-					buf_ptr[i++] = x
+					unsafe {
+						buf_ptr[i++] = x
+					}
 				}
 				tmp--
 			}
 		}
 		cc_i++
 	}
-	buf_ptr[i] = byte(0)
+	unsafe {
+		buf_ptr[i] = byte(0)
+	}
 
 	return tos_clone( buf_ptr )
 }
 
-fn (re RE) check_char_class(pc int, ch u32) bool {
+fn (re RE) check_char_class(pc int, ch rune) bool {
 	mut cc_i := re.prog[pc].cc_index
 	for cc_i >= 0 && cc_i < re.cc.len && re.cc[cc_i].cc_type != cc_end {
 		if re.cc[cc_i].cc_type == cc_bsls {
@@ -544,7 +557,7 @@ fn (re RE) check_char_class(pc int, ch u32) bool {
 }
 
 // parse_char_class return (index, str_len, cc_type) of a char class [abcm-p], char class start after the [ char
-fn (mut re RE) parse_char_class(in_txt string, in_i int) (int, int, u32) {
+fn (mut re RE) parse_char_class(in_txt string, in_i int) (int, int, rune) {
 	mut status := CharClass_parse_state.start
 	mut i := in_i
 
@@ -689,7 +702,9 @@ fn (re RE) parse_quantifier(in_txt string, in_i int) (int, int, int, bool) {
 	mut ch := byte(0)
 
 	for i < in_txt.len {
-		ch = in_txt.str[i]
+		unsafe {
+			ch = in_txt.str[i]
+		}
 
 		//println("${ch:c} status: $status")
 
@@ -897,7 +912,12 @@ fn (re RE) parse_groups(in_txt string, in_i int) (int, bool, string, int) {
 // main compiler
 //
 // compile return (return code, index) where index is the index of the error in the query string if return code is an error code
+[deprecated]
 pub fn (mut re RE) compile(in_txt string) (int,int) {
+	return re.impl_compile(in_txt)
+}
+
+fn (mut re RE) impl_compile(in_txt string) (int,int) {
 	mut i        := 0      // input string index
 	mut pc       := 0      // program counter
 	mut tmp_code := u32(0)
@@ -1189,7 +1209,7 @@ pub fn (mut re RE) compile(in_txt string) (int,int) {
 	}
 
 	// init the state stack
-	re.state_stack = [StateDotObj{}].repeat(tmp_count+1)
+	re.state_stack = []StateDotObj{len: tmp_count+1, init: StateDotObj{}}
 
 	// OR branch
 	// a|b|cd
@@ -1462,7 +1482,7 @@ fn state_str(s Match_state) string {
 
 struct StateObj {
 pub mut:
-	match_flag bool = false
+	match_flag bool
 	match_index int = -1
 	match_first int = -1
 }
@@ -1473,14 +1493,14 @@ pub fn (mut re RE) match_base(in_txt byteptr, in_txt_len int ) (int,int) {
 	mut first_match := -1             //index of the first match
 
 	mut i := 0                       // source string index
-	mut ch := u32(0)                 // examinated char
+	mut ch := rune(0)                 // examinated char
 	mut char_len := 0                // utf8 examinated char len
 	mut m_state := Match_state.start // start point for the matcher FSM
 
 	mut pc := -1                     // program counter
 	mut state := StateObj{}          // actual state
-	mut ist := u32(0)                // actual instruction
-	mut l_ist := u32(0)              // last matched instruction
+	mut ist := rune(0)                // actual instruction
+	mut l_ist :=rune(0)              // last matched instruction
 
 	mut group_stack      := [-1].repeat(re.group_max)
 	mut group_data       := [-1].repeat(re.group_max)
@@ -2172,6 +2192,7 @@ Public functions
 //
 
 // regex create a regex object from the query string
+[deprecated]
 pub fn regex(in_query string) (RE,int,int){
 	mut re := RE{}
 	re.prog = [Token{}].repeat(in_query.len+1)
@@ -2183,12 +2204,17 @@ pub fn regex(in_query string) (RE,int,int){
 }
 
 // new_regex create a RE of small size, usually sufficient for ordinary use
+[deprecated]
 pub fn new_regex() RE {
-	return new_regex_by_size(1)
+	return impl_new_regex_by_size(1)
 }
 
 // new_regex_by_size create a RE of large size, mult specify the scale factor of the memory that will be allocated
+[deprecated]
 pub fn new_regex_by_size(mult int) RE {
+	return impl_new_regex_by_size(mult)
+}
+fn impl_new_regex_by_size(mult int) RE {
 	mut re := RE{}
 	re.prog = [Token{}].repeat(max_code_len*mult)       // max program length, default 256 istructions
 	re.cc = [CharClass{}].repeat(max_code_len*mult)     // char class list

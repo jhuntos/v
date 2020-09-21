@@ -1,4 +1,3 @@
-import sync
 import time
 
 const (
@@ -24,7 +23,9 @@ fn test_autolocked_array() {
 	for {
 		mut finished_threads := 0
 		rlock abc {
-			finished_threads = abc[0]
+			finished_threads = unsafe {
+				abc[0]
+			}
 		}
 		if finished_threads == 2 {
 			break

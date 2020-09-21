@@ -12,12 +12,11 @@ import strings
 import time
 
 pub const (
-	methods_with_form = ['POST', 'PUT', 'PATCH']
-	method_all = ['GET','POST','PUT','PATCH','DELETE']
+	methods_with_form = [http.Method.post, .put, .patch]
 	header_server = 'Server: VWeb\r\n'
 	header_connection_close = 'Connection: close\r\n'
 	headers_close = '${header_server}${header_connection_close}\r\n'
-	http_404 = 'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n${headers_close}404 Not Found'
+	http_404 = 'HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 13\r\n${headers_close}404 Not Found'
 	http_500 = 'HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\n${headers_close}500 Internal Server Error'
 	mime_types = {
 		'.css': 'text/css; charset=utf-8',
@@ -26,6 +25,7 @@ pub const (
 		'.html': 'text/html; charset=utf-8',
 		'.jpg': 'image/jpeg',
 		'.js': 'application/javascript',
+		'.json': 'application/json',
 		'.md': 'text/markdown; charset=utf-8',
 		'.pdf': 'application/pdf',
 		'.png': 'image/png',
@@ -43,6 +43,7 @@ mut:
 	static_files map[string]string
 	static_mime_types map[string]string
 	content_type string = 'text/plain'
+	status string = '200 OK'
 pub:
 	req http.Request
 	conn net.Socket
@@ -72,8 +73,9 @@ fn (mut ctx Context) send_response_to_client(mimetype string, res string) bool {
 	ctx.done = true
 	mut sb := strings.new_builder(1024)
 	defer { sb.free() }
-	sb.write('HTTP/1.1 200 OK\r\nContent-Type: ') sb.write(mimetype)
-	sb.write('\r\nContent-Length: ')              sb.write(res.len.str())
+	sb.write('HTTP/1.1 ${ctx.status}')
+	sb.write('\r\nContent-Type: ${mimetype}')
+	sb.write('\r\nContent-Length: ${res.len}')
 	sb.write(ctx.headers)
 	sb.write('\r\n')
 	sb.write(headers_close)
@@ -133,7 +135,6 @@ pub fn (mut ctx Context) set_cookie(cookie Cookie) {
 
 pub fn (mut ctx Context) set_cookie_old(key, val string) {
 	// TODO support directives, escape cookie value (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie)
-	//println('Set-Cookie $key=$val')
 	//ctx.add_header('Set-Cookie', '${key}=${val};  Secure; HttpOnly')
 	ctx.add_header('Set-Cookie', '${key}=${val}; HttpOnly')
 }
@@ -163,6 +164,14 @@ pub fn (ctx &Context) get_cookie(key string) ?string { // TODO refactor
 		return cookie.trim_space()
 	}
 	return error('Cookie not found')
+}
+
+pub fn (mut ctx Context) set_status(code int, desc string) {
+	if code < 100 || code > 599 {
+		ctx.status = '500 Internal Server Error'
+	} else {
+		ctx.status = '$code $desc'
+	}
 }
 
 pub fn (mut ctx Context) add_header(key, val string) {
@@ -246,7 +255,6 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 	mut body := ''
 	mut in_headers := true
 	mut len := 0
-	mut body_len := 0
 	//for line in lines[1..] {
 	for _ in 0..100 {
 		//println(j)
@@ -272,9 +280,8 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 				//println('GOT CL=$len')
 			}
 		} else {
-			body += sline + '\r\n'
-			body_len += body.len
-			if body_len >= len {
+			body += line.trim_left('\r\n')
+			if body.len >= len {
 				break
 			}
 			//println('body:$body')
@@ -286,7 +293,7 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 		data: strip(body)
 		ws_func: 0
 		user_ptr: 0
-		method: vals[0]
+		method: http.method_from_str(vals[0])
 		url: vals[1]
 	}
 	$if debug {
@@ -337,10 +344,12 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 	app.init()
 
 	// Call the right action
-	println('route matching...')
+	$if debug {
+		println('route matching...')
+	}
 	//t := time.ticks()
 	//mut action := ''
-	mut route_words := []string{}
+	mut route_words_a := [][]string{}
 	mut url_words := vals[1][1..].split('/').filter(it != '')
 
 
@@ -360,62 +369,100 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 		}
 	}
 
-	mut vars := []string{cap: route_words.len}
+	mut vars := []string{cap: route_words_a.len}
 	mut action := ''
-	$for method in T {
-		if attrs == '' {
-			// No routing for this method. If it matches, call it and finish matching
-			// since such methods have a priority.
-			// For example URL `/register` matches route `/:user`, but `fn register()`
-			// should be called first.
-			if (req.method == 'GET' && url_words[0] == method && url_words.len == 1) || (req.method == 'POST' && url_words[0] + '_post' == method) {
-				println('easy match method=$method')
-				app.$method(vars)
-				return
-			}
-		} else {
-			route_words = attrs[1..].split('/')
-			if url_words.len == route_words.len || (url_words.len >= route_words.len - 1 && route_words.last().ends_with('...')) {
-				// match `/:user/:repo/tree` to `/vlang/v/tree`
-				mut matching := false
-				mut unknown := false
-				mut variables := []string{cap: route_words.len}
-				for i in 0..route_words.len {
-					if url_words.len == i {
-						variables << ''
-						matching = true
-						unknown = true
-						break
+	$for method in T.methods {
+		$if method.ReturnType is Result {
+			attrs := method.attrs
+			route_words_a = [][]string{}
+			if attrs.len == 0 {
+				// No routing for this method. If it matches, call it and finish matching
+				// since such methods have a priority.
+				// For example URL `/register` matches route `/:user`, but `fn register()`
+				// should be called first.
+				if (req.method == .get && url_words[0] == method.name && url_words.len == 1) || (req.method == .post && url_words[0] + '_post' == method.name) {
+					$if debug {
+						println('easy match method=$method.name')
 					}
-					if url_words[i] == route_words[i] {
-						// no parameter
-						matching = true
-						continue
-					} else if route_words[i].starts_with(':') {
-						// is parameter
-						if i < route_words.len && !route_words[i].ends_with('...') {
-							// normal parameter
-							variables << url_words[i]
-						} else {
-							// array parameter only in the end
-							variables << url_words[i..].join('/')
-						}
-						matching = true
-						unknown = true
-						continue
-					} else {
-						matching = false
-						break
-					}
-				}
-				if matching && !unknown {
-					// absolute router words like `/test/site`
 					app.$method(vars)
 					return
-				} else if matching && unknown {
-					// router words with paramter like `/:test/site`
-					action = method
-					vars = variables
+				}
+			} else {
+				// Get methods
+				// Get is default
+				if req.method == .post {
+					if 'post' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'post').map(it[1..].split('/'))
+					}
+				} else if req.method == .put {
+					if 'put' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'put').map(it[1..].split('/'))
+					}
+				} else if req.method == .patch {
+					if 'patch' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'patch').map(it[1..].split('/'))
+					}
+				} else if req.method == .delete {
+					if 'delete' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'delete').map(it[1..].split('/'))
+					}
+				} else if req.method == .head {
+					if 'head' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'head').map(it[1..].split('/'))
+					}
+				} else if req.method == .options {
+					if 'options' in attrs {
+						route_words_a = attrs.filter(it.to_lower() != 'options').map(it[1..].split('/'))
+					}
+				} else {
+					route_words_a = attrs.filter(it.to_lower() != 'get').map(it[1..].split('/'))
+				}
+				if route_words_a.len > 0 {
+					for route_words in route_words_a {
+						if url_words.len == route_words.len || (url_words.len >= route_words.len - 1 && route_words.last().ends_with('...')) {
+							// match `/:user/:repo/tree` to `/vlang/v/tree`
+							mut matching := false
+							mut unknown := false
+							mut variables := []string{cap: route_words.len}
+							for i in 0..route_words.len {
+								if url_words.len == i {
+									variables << ''
+									matching = true
+									unknown = true
+									break
+								}
+								if url_words[i] == route_words[i] {
+									// no parameter
+									matching = true
+									continue
+								} else if route_words[i].starts_with(':') {
+									// is parameter
+									if i < route_words.len && !route_words[i].ends_with('...') {
+										// normal parameter
+										variables << url_words[i]
+									} else {
+										// array parameter only in the end
+										variables << url_words[i..].join('/')
+									}
+									matching = true
+									unknown = true
+									continue
+								} else {
+									matching = false
+									break
+								}
+							}
+							if matching && !unknown {
+								// absolute router words like `/test/site`
+								app.$method(vars)
+								return
+							} else if matching && unknown {
+								// router words with paramter like `/:test/site`
+								action = method.name
+								vars = variables
+							}
+						}
+					}
 				}
 			}
 		}
@@ -425,16 +472,13 @@ fn handle_conn<T>(conn net.Socket, mut app T) {
 		conn.send_string(http_404) or {}
 		return
 	}
-	send_action<T>(action, vars, mut app)
-}
-
-fn send_action<T>(action string, vars []string, mut app T) {
-	// TODO remove this function
-	$for method in T {
-		// search again for method
-		if action == method && attrs != '' {
-			// call action method
-			app.$method(vars)
+	$for method in T.methods {
+		$if method.ReturnType is Result {
+			// search again for method
+			if action == method.name && method.attrs.len > 0 {
+				// call action method
+				app.$method(vars)
+			}
 		}
 	}
 }
@@ -454,7 +498,9 @@ fn (mut ctx Context) parse_form(s string) {
 		}
 		keyval := word.trim_space().split('=')
 		if keyval.len != 2 { continue }
-		key := keyval[0]
+		key := urllib.query_unescape(keyval[0]) or {
+			continue
+		}
 		val := urllib.query_unescape(keyval[1]) or {
 			continue
 		}
@@ -521,10 +567,10 @@ pub fn (ctx &Context) ip() string {
 	if ip.contains(',') {
 		ip = ip.all_before(',')
 	}
+	if ip == '' {
+		ip = ctx.conn.peer_ip() or { '' }
+	}
 	return ip
-	// TODO make return ctx.conn.peer_ip() or { '' } work
-	//res := ctx.conn.peer_ip() or { '' }
-	//return res
 }
 
 pub fn (mut ctx Context) error(s string) {
@@ -541,7 +587,7 @@ fn readall(conn net.Socket) string {
 	for {
 		n := C.recv(conn.sockfd, buf, 1024, 0)
 		m := conn.crecv(buf, 1024)
-		message += string( byteptr(buf), m )
+		message += unsafe { byteptr(buf).vstring_with_len(m) }
 		if message.len > max_http_post_size { break }
 		if n == m { break }
 	}

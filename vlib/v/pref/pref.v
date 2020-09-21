@@ -32,11 +32,12 @@ pub enum Backend {
 }
 
 pub enum CompilerType {
+	gcc
 	tinyc
 	clang
 	mingw
 	msvc
-	gcc
+	cplusplus
 }
 
 const (
@@ -55,6 +56,7 @@ pub mut:
 	// nofmt            bool   // disable vfmt
 	is_test             bool // `v test string_test.v`
 	is_script           bool // single file mode (`v program.v`), main function can be skipped
+	is_vsh              bool // v script (`file.vsh`) file, the `os` module should be made global
 	is_livemain         bool // main program that contains live/hot code
 	is_liveshared       bool // a shared library, that will be used in a -live main program
 	is_shared           bool // an ordinary shared library, -shared, no matter if it is live or not
@@ -70,7 +72,7 @@ pub mut:
 	is_debug            bool // false by default, turned on by -g or -cg, it tells v to pass -g to the C backend compiler.
 	is_vlines           bool // turned on by -g, false by default (it slows down .tmp.c generation slightly).
 	show_cc             bool // -showcc, print cc command
-	// NB: passing -cg instead of -g will set is_vlines to false and is_g to true, thus making v generate cleaner C files,
+	// NB: passing -cg instead of -g will set is_vlines to false and is_debug to true, thus making v generate cleaner C files,
 	// which are sometimes easier to debug / inspect manually than the .tmp.c files by plain -g (when/if v line number generation breaks).
 	use_cache           bool // turns on v usage of the module cache to speed up compilation.
 	is_stats            bool // `v -stats file_test.v` will produce more detailed statistics for the tests that were run
@@ -80,7 +82,8 @@ pub mut:
 	// For example, passing -cflags -Os will cause the C compiler to optimize the generated binaries for size.
 	// You could pass several -cflags XXX arguments. They will be merged with each other.
 	// You can also quote several options at the same time: -cflags '-Os -fno-inline-small-functions'.
-	ccompiler           string // the name of the used C compiler
+	ccompiler           string // the name of the C compiler used
+	ccompiler_type      CompilerType // the type of the C compiler used
 	third_party_option  string
 	building_v          bool
 	autofree            bool
@@ -101,7 +104,10 @@ pub mut:
 	output_cross_c      bool
 	prealloc            bool
 	vroot               string
+	out_name_c          string // full os.real_path to the generated .tmp.c file; set by builder.
 	out_name            string
+	display_name        string
+	bundle_id           string
 	path                string // Path to file/folder to compile
 	// -d vfmt and -d another=0 for `$if vfmt { will execute }` and `$if another { will NOT get here }`
 	compile_defines     []string // just ['vfmt']
@@ -118,6 +124,8 @@ pub mut:
 	only_check_syntax   bool // when true, just parse the files, then stop, before running checker
 	experimental        bool // enable experimental features
 	show_timings        bool // show how much time each compiler stage took
+	is_ios_simulator    bool
+	is_apk              bool // build as Android .apk format
 }
 
 pub fn parse_args(args []string) (&Preferences, string) {
@@ -129,6 +137,9 @@ pub fn parse_args(args []string) (&Preferences, string) {
 		arg := args[i]
 		current_args := args[i..]
 		match arg {
+			'-apk' {
+				res.is_apk = true
+			}
 			'-show-timings' {
 				res.show_timings = true
 			}
@@ -141,8 +152,13 @@ pub fn parse_args(args []string) (&Preferences, string) {
 			'-silent' {
 				res.output_mode = .silent
 			}
+			'-g' {
+				res.is_debug = true
+				res.is_vlines = true
+			}
 			'-cg' {
 				res.is_debug = true
+				res.is_vlines = false
 			}
 			'-repl' {
 				res.is_repl = true
@@ -182,6 +198,9 @@ pub fn parse_args(args []string) (&Preferences, string) {
 			}
 			'-prod' {
 				res.is_prod = true
+			}
+			'-simulator' {
+				res.is_ios_simulator = true
 			}
 			'-stats' {
 				res.is_stats = true
@@ -273,7 +292,7 @@ pub fn parse_args(args []string) (&Preferences, string) {
 			}
 			'-path' {
 				path := cmdline.option(current_args, '-path', '')
-				res.lookup_path = path.split(os.path_delimiter)
+				res.lookup_path = path.replace('|', os.path_delimiter).split(os.path_delimiter)
 				i++
 			}
 			'-custom-prelude' {
@@ -283,6 +302,14 @@ pub fn parse_args(args []string) (&Preferences, string) {
 					exit(1)
 				}
 				res.custom_prelude = prelude
+				i++
+			}
+			'-name' {
+				res.display_name = cmdline.option(current_args, '-name', '')
+				i++
+			}
+			'-bundle' {
+				res.bundle_id = cmdline.option(current_args, '-bundle', '')
 				i++
 			}
 			else {
@@ -339,7 +366,7 @@ fn must_exist(path string) {
 	if !os.exists(path) {
 		eprintln('v expects that `$path` exists, but it does not')
 		exit(1)
-	}        
+	}
 }
 
 pub fn backend_from_string(s string) ?Backend {
@@ -349,6 +376,19 @@ pub fn backend_from_string(s string) ?Backend {
 		'x64' { return .x64 }
 		else { return error('Unknown backend type $s') }
 	}
+}
+
+// Helper function to convert string names to CC enum
+pub fn cc_from_string(cc_str string) CompilerType {
+	if cc_str.len == 0 { return .gcc } // TODO
+	cc := cc_str.replace('\\', '/').split('/').last().all_before('.')
+	if '++'    in cc { return .cplusplus }
+	if 'tcc'   in cc { return .tinyc }
+	if 'tinyc' in cc { return .tinyc }
+	if 'clang' in cc { return .clang }
+	if 'mingw' in cc { return .mingw }
+	if 'msvc'  in cc { return .msvc  }
+	return .gcc
 }
 
 fn parse_define(mut prefs Preferences, define string) {

@@ -3,7 +3,6 @@
 // that can be found in the LICENSE file.
 module builtin
 
-import strings
 //import hash.wyhash as hash
 import hash
 
@@ -105,14 +104,15 @@ mut:
 }
 
 [inline]
-[unsafe_fn]
+[unsafe]
 fn new_dense_array(value_bytes int) DenseArray {
+	s8size := int(8 * sizeof(string))
 	return DenseArray{
 		value_bytes: value_bytes
 		cap: 8
 		len: 0
 		deletes: 0
-		keys: &string(malloc(int(8 * sizeof(string))))
+		keys: &string(malloc(s8size))
 		values: malloc(8 * value_bytes)
 	}
 }
@@ -124,8 +124,9 @@ fn (mut d DenseArray) push(key string, value voidptr) u32 {
 	if d.cap == d.len {
 		d.cap += d.cap >> 3
 		unsafe {
-			d.keys = &string(v_realloc(d.keys, sizeof(string) * d.cap))
-			d.values = v_realloc(d.values, u32(d.value_bytes) * d.cap)
+			x := v_realloc(byteptr(d.keys), sizeof(string) * d.cap)
+			d.keys = &string(x)
+			d.values = v_realloc(byteptr(d.values), u32(d.value_bytes) * d.cap)
 		}
 	}
 	push_index := d.len
@@ -174,8 +175,9 @@ fn (mut d DenseArray) zeros_to_end() {
 	d.len = count
 	d.cap = if count < 8 { u32(8) } else { count }
 	unsafe {
-		d.keys = &string(v_realloc(d.keys, sizeof(string) * d.cap))
-		d.values = v_realloc(d.values, u32(d.value_bytes) * d.cap)
+		x := v_realloc(byteptr(d.keys), sizeof(string) * d.cap)
+		d.keys = &string(x)
+		d.values = v_realloc(byteptr(d.values), u32(d.value_bytes) * d.cap)
 	}
 }
 
@@ -204,13 +206,14 @@ pub mut:
 }
 
 fn new_map_1(value_bytes int) map {
+	metasize := int(sizeof(u32) * (init_capicity + extra_metas_inc))
 	return map{
 		value_bytes: value_bytes
 		cap: init_cap
 		cached_hashbits: max_cached_hashbits
 		shift: init_log_capicity
 		key_values: new_dense_array(value_bytes)
-		metas: &u32(vcalloc(int(sizeof(u32) * (init_capicity + extra_metas_inc))))
+		metas: &u32(vcalloc(metasize))
 		extra_metas: extra_metas_inc
 		len: 0
 	}
@@ -280,7 +283,8 @@ fn (mut m map) ensure_extra_metas(probe_count u32) {
 		m.extra_metas += extra_metas_inc
 		mem_size := (m.cap + 2 + m.extra_metas)
 		unsafe {
-			m.metas = &u32(v_realloc(m.metas, sizeof(u32) * mem_size))
+			x := v_realloc(byteptr(m.metas), sizeof(u32) * mem_size)
+			m.metas = &u32(x)
 			C.memset(m.metas + mem_size - extra_metas_inc, 0, sizeof(u32) * extra_metas_inc)
 		}
 		// Should almost never happen
@@ -342,7 +346,8 @@ fn (mut m map) expand() {
 fn (mut m map) rehash() {
 	meta_bytes := sizeof(u32) * (m.cap + 2 + m.extra_metas)
 	unsafe {
-		m.metas = &u32(v_realloc(m.metas, meta_bytes))
+		x := v_realloc(byteptr(m.metas), meta_bytes)
+		m.metas = &u32(x)
 		C.memset(m.metas, 0, meta_bytes)
 	}
 	for i := u32(0); i < m.key_values.len; i++ {
@@ -359,7 +364,8 @@ fn (mut m map) rehash() {
 // key completely, it uses the bits cached in `metas`.
 fn (mut m map) cached_rehash(old_cap u32) {
 	old_metas := m.metas
-	m.metas = &u32(vcalloc(int(sizeof(u32) * (m.cap + 2 + m.extra_metas))))
+	metasize := int(sizeof(u32) * (m.cap + 2 + m.extra_metas))
+	m.metas = &u32(vcalloc(metasize))
 	old_extra_metas := m.extra_metas
 	for i := u32(0); i <= old_cap + old_extra_metas; i += 2 {
 		if unsafe {old_metas[i]} == 0 {
@@ -497,43 +503,45 @@ pub fn (m &map) keys() []string {
 	return keys
 }
 
-[unsafe_fn]
+[unsafe]
 pub fn (d DenseArray) clone() DenseArray {
+	ksize := int(d.cap * sizeof(string))
+	vsize := int(d.cap * u32(d.value_bytes))
 	res := DenseArray {
 		value_bytes: d.value_bytes
 		cap:         d.cap
-		len:        d.len
+		len:         d.len
 		deletes:     d.deletes
-		keys:        unsafe {&string(malloc(int(d.cap * sizeof(string))))}
-		values:      unsafe {byteptr(malloc(int(d.cap * u32(d.value_bytes))))}
+		keys:        unsafe {&string(malloc(ksize))}
+		values:      unsafe {byteptr(malloc(vsize))}
 	}
 	unsafe {
-		C.memcpy(res.keys, d.keys, d.cap * sizeof(string))
-		C.memcpy(res.values, d.values, d.cap * u32(d.value_bytes))
+		C.memcpy(res.keys, d.keys, ksize)
+		C.memcpy(res.values, d.values, vsize)
 	}
 	return res
 }
 
-[unsafe_fn]
+[unsafe]
 pub fn (m map) clone() map {
-	metas_size := sizeof(u32) * (m.cap + 2 + m.extra_metas)
+	metasize := int(sizeof(u32) * (m.cap + 2 + m.extra_metas))
 	res := map{
 		value_bytes:     m.value_bytes
 		cap:             m.cap
 		cached_hashbits: m.cached_hashbits
 		shift:           m.shift
 		key_values:      unsafe {m.key_values.clone()}
-		metas:           &u32(malloc(int(metas_size)))
+		metas:           &u32(malloc(metasize))
 		extra_metas:     m.extra_metas
 		len:            m.len
 	}
 	unsafe {
-		C.memcpy(res.metas, m.metas, metas_size)
+		C.memcpy(res.metas, m.metas, metasize)
 	}
 	return res
 }
 
-[unsafe_fn]
+[unsafe]
 pub fn (m &map) free() {
 	unsafe {
 		free(m.metas)
@@ -552,6 +560,7 @@ pub fn (m &map) free() {
 	}
 }
 
+/*
 pub fn (m map_string) str() string {
 	if m.len == 0 {
 		return '{}'
@@ -564,3 +573,4 @@ pub fn (m map_string) str() string {
 	sb.writeln('}')
 	return sb.str()
 }
+*/

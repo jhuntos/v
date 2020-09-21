@@ -67,9 +67,9 @@ fn C.fclose() int
 
 fn C.pclose() int
 
-
 fn C.system() int
-
+fn C.posix_spawn(&int, charptr, voidptr, voidptr, &charptr, voidptr) int
+fn C.waitpid(int, voidptr, int) int
 
 fn C.setenv(charptr) int
 
@@ -125,7 +125,7 @@ fn C.mktime() int
 fn C.gettimeofday() int
 
 
-[trusted_fn]
+[trusted]
 fn C.sleep(int) int
 
 
@@ -153,11 +153,11 @@ fn C.tolower() int
 fn C.toupper() int
 
 
-[trusted_fn]
+[trusted]
 fn C.getchar() int
 
 
-[trusted_fn]
+[trusted]
 fn C.strerror(int) charptr
 
 
@@ -221,7 +221,7 @@ fn C.SendMessageTimeoutW(hWnd voidptr, Msg u32, wParam &u16, lParam &u32, fuFlag
 fn C.CreateProcessW(lpApplicationName &u16, lpCommandLine &u16, lpProcessAttributes voidptr, lpThreadAttributes voidptr, bInheritHandles bool, dwCreationFlags u32, lpEnvironment voidptr, lpCurrentDirectory &u16, lpStartupInfo voidptr, lpProcessInformation voidptr) bool
 
 
-fn C.ReadFile(hFile voidptr, lpBuffer voidptr, nNumberOfBytesToRead u32, lpNumberOfBytesRead voidptr, lpOverlapped voidptr) bool
+fn C.ReadFile(hFile voidptr, lpBuffer voidptr, nNumberOfBytesToRead u32, lpNumberOfBytesRead C.LPDWORD, lpOverlapped voidptr) bool
 
 
 fn C.GetFileAttributesW(lpFileName byteptr) u32
@@ -348,7 +348,7 @@ fn C.MAKELANGID() int
 fn C.FormatMessage() voidptr
 
 
-fn C.CloseHandle()
+fn C.CloseHandle(voidptr) int
 
 
 fn C.GetExitCodeProcess()
@@ -411,6 +411,7 @@ fn C.ReleaseSRWLockExclusive(voidptr)
 fn C.pthread_mutex_init(voidptr, voidptr) int
 fn C.pthread_mutex_lock(voidptr) int
 fn C.pthread_mutex_unlock(voidptr) int
+fn C.pthread_mutex_destroy(voidptr) int
 
 fn C.pthread_rwlockattr_init(voidptr) int
 fn C.pthread_rwlockattr_setkind_np(voidptr, int) int
@@ -422,16 +423,26 @@ fn C.pthread_rwlock_unlock(voidptr) int
 
 fn C.pthread_condattr_init(voidptr) int
 fn C.pthread_condattr_setpshared(voidptr, int) int
+fn C.pthread_condattr_destroy(voidptr) int
 fn C.pthread_cond_init(voidptr, voidptr) int
 fn C.pthread_cond_signal(voidptr) int
 fn C.pthread_cond_wait(voidptr, voidptr) int
 fn C.pthread_cond_timedwait(voidptr, voidptr, voidptr) int
+fn C.pthread_cond_destroy(voidptr) int
 
 fn C.sem_init(voidptr, int, u32) int
 fn C.sem_post(voidptr) int
 fn C.sem_wait(voidptr) int
 fn C.sem_trywait(voidptr) int
 fn C.sem_timedwait(voidptr, voidptr) int
+fn C.sem_destroy(voidptr) int
+
+// MacOS semaphore functions
+fn C.dispatch_semaphore_create(i64) voidptr
+fn C.dispatch_semaphore_signal(voidptr) i64
+fn C.dispatch_semaphore_wait(voidptr, u64) i64
+fn C.dispatch_time(u64, i64) u64
+fn C.dispatch_release(voidptr)
 
 fn C.read(fd int, buf voidptr, count size_t) int
 fn C.write(fd int, buf voidptr, count size_t) int

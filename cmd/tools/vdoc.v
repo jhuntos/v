@@ -96,14 +96,14 @@ enum OutputType {
 struct DocConfig {
 mut:
 	pub_only       bool = true
-	show_loc       bool = false // for plaintext
-	serve_http     bool = false // for html
-	is_multi       bool = false
-	is_verbose     bool = false
-	include_readme bool = false
-	open_docs      bool = false
+	show_loc       bool        // for plaintext
+	serve_http     bool        // for html
+	is_multi       bool
+	is_verbose     bool
+	include_readme bool
+	open_docs      bool
 	server_port    int  = 8046
-	inline_assets  bool = false
+	inline_assets  bool
 	output_path    string
 	input_path     string
 	output_type    OutputType = .unset
@@ -285,7 +285,7 @@ fn html_highlight(code string, tb &table.Table) string {
 		} else { tok.lit }
 		return if typ in [.unone, .name] { lit } else { '<span class="token $typ">$lit</span>' }
 	}
-	s := scanner.new_scanner(code, .parse_comments, &pref.Preferences{})
+	mut s := scanner.new_scanner(code, .parse_comments, &pref.Preferences{})
 	mut tok := s.scan()
 	mut next_tok := s.scan()
 	mut buf := strings.new_builder(200)
@@ -388,7 +388,7 @@ fn (cfg DocConfig) readme_idx() int {
 	return -1
 }
 
-fn write_toc(cn doc.DocNode, nodes []doc.DocNode, toc &strings.Builder) {
+fn write_toc(cn doc.DocNode, nodes []doc.DocNode, mut toc strings.Builder) {
 	toc_slug := if cn.content.len == 0 { '' } else { slug(cn.name) }
 	toc.write('<li class="open"><a href="#$toc_slug">${cn.name}</a>')
 	children := nodes.find_children_of(cn.name)
@@ -403,7 +403,7 @@ fn write_toc(cn doc.DocNode, nodes []doc.DocNode, toc &strings.Builder) {
 	toc.writeln('</li>')
 }
 
-fn (cfg DocConfig) write_content(cn &doc.DocNode, dcs &doc.Doc, hw &strings.Builder) {
+fn (cfg DocConfig) write_content(cn &doc.DocNode, dcs &doc.Doc, mut hw strings.Builder) {
 	base_dir := os.base_dir(os.real_path(cfg.input_path))
 	file_path_name := if cfg.is_multi { cn.file_path.replace('$base_dir/', '') } else { os.file_name(cn.file_path) }
 	src_link := get_src_link(cfg.manifest.repo_url, file_path_name, cn.pos.line)
@@ -429,7 +429,7 @@ fn (cfg DocConfig) gen_html(idx int) string {
 	for cn in dcs.contents {
 		cfg.write_content(&cn, &dcs, &contents)
 		if cn.attrs['parent'] == 'Constants' || cn.attrs['category'] == 'Methods' { continue }
-		write_toc(cn, dcs.contents, &toc)
+		write_toc(cn, dcs.contents, mut toc)
 	}	// write head
 	// get resources
 	doc_css := cfg.get_resource(css_js_assets[0], true)

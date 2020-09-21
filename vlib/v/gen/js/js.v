@@ -10,11 +10,13 @@ import v.depgraph
 const (
 	// https://ecma-international.org/ecma-262/#sec-reserved-words
 	js_reserved = ['await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
-		'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'finally', 'for', 'function',
-		'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'package', 'private',
-		'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'try', 'typeof',
-		'var', 'void', 'while', 'with', 'yield']
-	tabs = ['', '\t', '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t', '\t\t\t\t\t\t', '\t\t\t\t\t\t\t', '\t\t\t\t\t\t\t\t']
+		'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'finally', 'for', 'function', 'if',
+		'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'package', 'private', 'protected',
+		'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void',
+		'while', 'with', 'yield']
+	tabs        = ['', '\t', '\t\t', '\t\t\t', '\t\t\t\t', '\t\t\t\t\t', '\t\t\t\t\t\t', '\t\t\t\t\t\t\t',
+		'\t\t\t\t\t\t\t\t',
+	]
 )
 
 struct JsGen {
@@ -230,6 +232,9 @@ pub fn (mut g JsGen) typ(t table.Type) string {
 			info := sym.info as table.ArrayFixed
 			styp = g.typ(info.elem_type) + '[]'
 		}
+		.chan {
+			styp = 'chan'
+		}
 		// 'map[string]int' => 'Map<string, number>'
 		.map {
 			info := sym.info as table.Map
@@ -275,16 +280,23 @@ pub fn (mut g JsGen) typ(t table.Type) string {
 		.interface_ {
 			styp = g.js_name(sym.name)
 		}
+		.rune {
+			styp = 'any'
+		}
 	}
-		/* else {
+	/*
+	else {
 			println('jsgen.typ: Unhandled type $t')
 			styp = sym.name
-		} */
-	if styp.starts_with('JS.') { return styp[3..] }
+		}
+	*/
+	if styp.starts_with('JS.') {
+		return styp[3..]
+	}
 	return styp
 }
 
-fn (mut g JsGen) fn_typ(args []table.Arg, return_type table.Type) string {
+fn (mut g JsGen) fn_typ(args []table.Param, return_type table.Type) string {
 	mut res := '('
 	for i, arg in args {
 		res += '$arg.name: ${g.typ(arg.typ)}'
@@ -425,9 +437,6 @@ fn (mut g JsGen) stmt(node ast.Stmt) {
 		ast.AssignStmt {
 			g.gen_assign_stmt(node)
 		}
-		ast.Attr {
-			g.gen_attr(node)
-		}
 		ast.Block {
 			g.gen_block(node)
 			g.writeln('')
@@ -436,9 +445,6 @@ fn (mut g JsGen) stmt(node ast.Stmt) {
 			g.gen_branch_stmt(node)
 		}
 		ast.CompFor {}
-		ast.CompIf {
-			// skip: JS has no compile time if
-		}
 		ast.ConstDecl {
 			g.gen_const_decl(node)
 		}
@@ -506,9 +512,6 @@ fn (mut g JsGen) stmt(node ast.Stmt) {
 		ast.TypeDecl {
 			// skip JS has no typedecl
 		}
-		ast.UnsafeStmt {
-			g.stmts(node.stmts)
-		}
 	}
 }
 
@@ -536,6 +539,9 @@ fn (mut g JsGen) expr(node ast.Expr) {
 		}
 		ast.CallExpr {
 			g.gen_call_expr(node)
+		}
+		ast.ChanInit {
+			// TODO
 		}
 		ast.CastExpr {
 			// JS has no types, so no need to cast
@@ -610,6 +616,9 @@ fn (mut g JsGen) expr(node ast.Expr) {
 		ast.RangeExpr {
 			// Only used in IndexExpr, requires index type info
 		}
+		ast.SelectExpr {
+			// TODO: to be implemented
+		}
 		ast.SelectorExpr {
 			g.gen_selector_expr(node)
 		}
@@ -646,8 +655,7 @@ fn (mut g JsGen) expr(node ast.Expr) {
 			// TODO
 		}
 		ast.UnsafeExpr {
-			es := node.stmts[0] as ast.ExprStmt
-			g.expr(es.expr)
+			g.expr(node.expr)
 		}
 	}
 }
@@ -743,8 +751,10 @@ fn (mut g JsGen) gen_assign_stmt(stmt ast.AssignStmt) {
 	}
 }
 
-fn (mut g JsGen) gen_attr(it ast.Attr) {
-	g.writeln('/* [$it.name] */')
+fn (mut g JsGen) gen_attrs(attrs []table.Attr) {
+	for attr in attrs {
+		g.writeln('/* [$attr.name] */')
+	}
 }
 
 fn (mut g JsGen) gen_block(it ast.Block) {
@@ -833,6 +843,7 @@ fn (mut g JsGen) gen_method_decl(it ast.FnDecl) {
 	g.fn_decl = &it
 	has_go := fn_has_go(it)
 	is_main := it.name == 'main.main'
+	g.gen_attrs(it.attrs)
 	if is_main {
 		// there is no concept of main in JS but we do have iife
 		g.writeln('/* program entry point */')
@@ -885,7 +896,7 @@ fn (mut g JsGen) gen_method_decl(it ast.FnDecl) {
 	g.fn_decl = voidptr(0)
 }
 
-fn (mut g JsGen) fn_args(args []table.Arg, is_variadic bool) {
+fn (mut g JsGen) fn_args(args []table.Param, is_variadic bool) {
 	// no_names := args.len > 0 && args[0].name == 'arg_1'
 	for i, arg in args {
 		name := g.js_name(arg.name)
@@ -1045,6 +1056,10 @@ fn (mut g JsGen) gen_hash_stmt(it ast.HashStmt) {
 }
 
 fn (mut g JsGen) gen_struct_decl(node ast.StructDecl) {
+	if node.name.starts_with('JS.') {
+		return
+	}
+	g.gen_attrs(node.attrs)
 	g.doc.gen_fac_fn(node.fields)
 	g.write('function ${g.js_name(node.name)}({ ')
 	for i, field in node.fields {
@@ -1099,7 +1114,7 @@ fn (mut g JsGen) gen_array_init_expr(it ast.ArrayInit) {
 	// 2)  Give the code unnecessary complexity
 	// 3)  Have several limitations like missing most `Array.prototype` methods
 	// 4)  Modern engines can optimize regular arrays into typed arrays anyways,
-	//     offering similar performance
+	// offering similar performance
 	if it.has_len {
 		t1 := g.new_tmp_var()
 		t2 := g.new_tmp_var()
@@ -1250,17 +1265,21 @@ fn (mut g JsGen) gen_if_expr(node ast.IfExpr) {
 				g.expr(branch.cond)
 				g.writeln(') {')
 			} else if i == node.branches.len - 1 && node.has_else {
-				/* if is_guard {
+				/*
+				if is_guard {
 					//g.writeln('} if (!$guard_ok) { /* else */')
-				} else { */
+				} else {
+				*/
 				g.writeln('} else {')
 				// }
 			}
 			g.stmts(branch.stmts)
 		}
-		/* if is_guard {
+		/*
+		if is_guard {
 			g.write('}')
-		} */
+		}
+		*/
 		g.writeln('}')
 		g.writeln('')
 	}
@@ -1325,7 +1344,8 @@ fn (mut g JsGen) gen_infix_expr(it ast.InfixExpr) {
 		g.write('.push(')
 		if r_sym.kind == .array {
 			g.write('...')
-		} // arr << [1, 2]
+		}
+		// arr << [1, 2]
 		g.expr(it.right)
 		g.write(')')
 	} else if r_sym.kind in [.array, .map, .string] && it.op in [.key_in, .not_in] {

@@ -1,4 +1,3 @@
-import sync
 import time
 
 fn incr(shared foo []int, index int) {
@@ -20,14 +19,19 @@ fn test_shared_array() {
 	go incr(shared foo, 1)
 	for _ in 0 .. 50000 {
 		lock foo {
-			foo[0] -= 2
-			foo[1] += 3
+			unsafe {
+				foo[0] -= 2
+				foo[1] += 3
+			}
 		}
 	}
 	mut finished_threads := 0
 	for {
 		rlock foo {
-			finished_threads = foo[2]
+			finished_threads = unsafe {
+				foo[2]
+			}
+
 		}
 		if finished_threads == 4 {
 			break
@@ -35,7 +39,15 @@ fn test_shared_array() {
 		time.sleep_ms(100)
 	}
 	rlock foo {
-		assert foo[0] == 100010
-		assert foo[1] == 350020
+		f0 := unsafe {
+			foo[0]
+		}
+
+		f1 := unsafe {
+			foo[1]
+		}
+
+		assert f0 == 100010
+		assert f1 == 350020
 	}
 }

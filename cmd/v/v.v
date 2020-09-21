@@ -17,7 +17,7 @@ const (
 		'repl',
 		'build-tools', 'build-examples',
 		'build-vbinaries',
-		'setup-freetype', 'doc'
+		'setup-freetype', 'doc', 'doctor'
 	]
 	list_of_flags_that_allow_duplicates = ['cc', 'd', 'define', 'cf', 'cflags']
 )
@@ -70,7 +70,7 @@ fn main() {
 			println('Translating C to V will be available in V 0.3')
 			return
 		}
-		'search', 'install', 'update', 'outdated', 'list', 'remove' {
+		'search', 'install', 'update', 'upgrade', 'outdated', 'list', 'remove' {
 			util.launch_tool(prefs.is_verbose, 'vpm', os.args[1..])
 			return
 		}

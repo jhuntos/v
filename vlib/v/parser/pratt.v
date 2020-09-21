@@ -13,7 +13,6 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 		eprintln('parsing file: ${p.file_name:-30} | tok.kind: ${p.tok.kind:-10} | tok.lit: ${p.tok.lit:-10} | tok_pos: ${tok_pos.str():-45} | expr($precedence)')
 	}
 	// println('\n\nparser.expr()')
-	mut typ := table.void_type
 	mut node := ast.Expr{}
 	is_stmt_ident := p.is_stmt_ident
 	p.is_stmt_ident = false
@@ -47,10 +46,14 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			node = p.enum_val()
 		}
 		.dollar {
-			if p.peek_tok.kind == .name {
-				return p.vweb()
-			} else {
-				p.error('unexpected $')
+			match p.peek_tok.kind {
+				.name {
+					return p.vweb()
+				} .key_if {
+					return p.if_expr(true)
+				} else {
+					p.error('unexpected $')
+				}
 			}
 		}
 		.chartoken {
@@ -60,7 +63,7 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			}
 			p.next()
 		}
-		.minus, .amp, .mul, .not, .bit_not {
+		.minus, .amp, .mul, .not, .bit_not, .arrow {
 			// -1, -a, !x, &x, ~x
 			node = p.prefix_expr()
 		}
@@ -74,6 +77,9 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 		.key_match {
 			node = p.match_expr()
 		}
+		.key_select {
+			node = p.select_expr()
+		}
 		.number {
 			node = p.parse_number_literal()
 		}
@@ -86,19 +92,21 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			}
 		}
 		.key_if {
-			node = p.if_expr()
+			node = p.if_expr(false)
 		}
 		.key_unsafe {
+			// unsafe {
 			p.next()
 			pos := p.tok.position()
 			assert !p.inside_unsafe
 			p.inside_unsafe = true
-			stmts := p.parse_block()
-			p.inside_unsafe = false
+			p.check(.lcbr)
 			node = ast.UnsafeExpr{
-				stmts: stmts
+				expr: p.expr(0)
 				pos: pos
 			}
+			p.check(.rcbr)
+			p.inside_unsafe = false
 		}
 		.key_lock, .key_rlock {
 			node = p.lock_expr()
@@ -188,30 +196,44 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			p.check(.rcbr)
 		}
 		.key_fn {
-			// Anonymous function
-			node = p.anon_fn()
-			// its a call
-			// NOTE: this could be moved to just before the pratt loop
-			// then anything can be a call, eg. `index[2]()` or `struct.field()`
-			// but this would take a bit of modification
-			if p.tok.kind == .lpar {
-				p.next()
-				pos := p.tok.position()
-				args := p.call_args()
-				p.check(.rpar)
-				node = ast.CallExpr{
-					name: 'anon'
-					left: node
-					args: args
-					pos: pos
+			if p.expecting_type {
+				// Anonymous function type
+				start_pos := p.tok.position()
+				return ast.Type{
+					typ: p.parse_type()
+					pos: start_pos.extend(p.prev_tok.position())
 				}
+			} else {
+				// Anonymous function
+				node = p.anon_fn()
+				// its a call
+				// NOTE: this could be moved to just before the pratt loop
+				// then anything can be a call, eg. `index[2]()` or `struct.field()`
+				// but this would take a bit of modification
+				if p.tok.kind == .lpar {
+					p.next()
+					pos := p.tok.position()
+					args := p.call_args()
+					p.check(.rpar)
+					node = ast.CallExpr{
+						name: 'anon'
+						left: node
+						args: args
+						pos: pos
+					}
+				}
+				return node
 			}
-			return node
 		}
 		else {
 			p.error('expr(): bad token `$p.tok.kind.str()`')
 		}
 	}
+	return p.expr_with_left(node, precedence, is_stmt_ident)
+}
+
+pub fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_ident bool) ast.Expr {
+	mut node := left
 	// Infix
 	for precedence < p.tok.precedence() {
 		if p.tok.kind == .dot {
@@ -228,7 +250,7 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			// sum type as cast `x := SumType as Variant`
 			pos := p.tok.position()
 			p.next()
-			typ = p.parse_type()
+			typ := p.parse_type()
 			node = ast.AsCast{
 				expr: node
 				typ: typ
@@ -259,8 +281,13 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 			if p.tok.kind == .key_as && p.inside_if {
 				return node
 			}
-		} else if p.tok.kind in [.inc, .dec] {
+		} else if p.tok.kind in [.inc, .dec] || (p.tok.kind == .question && p.inside_ct_if_expr) {
 			// Postfix
+			// detect `f(x++)`, `a[x++]`
+			if p.peek_tok.kind in [.rpar, .rsbr] &&
+				p.mod !in ['builtin', 'regex', 'strconv'] { // temp
+				p.warn_with_pos('`$p.tok.kind` operator can only be used as a statement', p.peek_tok.position())
+			}
 			node = ast.PostfixExpr{
 				op: p.tok.kind
 				expr: node
@@ -277,16 +304,21 @@ pub fn (mut p Parser) expr(precedence int) ast.Expr {
 
 fn (mut p Parser) infix_expr(left ast.Expr) ast.Expr {
 	op := p.tok.kind
+	if op == .arrow {
+		p.register_auto_import('sync')
+	}
 	// mut typ := p.
 	// println('infix op=$op.str()')
 	precedence := p.tok.precedence()
 	pos := p.tok.position()
 	p.next()
 	mut right := ast.Expr{}
+	prev_expecting_type := p.expecting_type
 	if op in [.key_is, .not_is] {
 		p.expecting_type = true
 	}
 	right = p.expr(precedence)
+	p.expecting_type = prev_expecting_type
 	if p.pref.is_vet && op in [.key_in, .not_in] &&
 		right is ast.ArrayInit && (right as ast.ArrayInit).exprs.len == 1 {
 		p.vet_error('Use `var == value` instead of `var in [value]`', pos.line_nr)
@@ -305,15 +337,54 @@ fn (mut p Parser) prefix_expr() ast.PrefixExpr {
 	if op == .amp {
 		p.is_amp = true
 	}
+	if op == .arrow {
+		p.register_auto_import('sync')
+	}
 	// if op == .mul && !p.inside_unsafe {
 	// p.warn('unsafe')
 	// }
 	p.next()
-	right := if op == .minus { p.expr(token.Precedence.call) } else { p.expr(token.Precedence.prefix) }
+	mut right := if op == .minus { p.expr(token.Precedence.call) } else { p.expr(token.Precedence.prefix) }
 	p.is_amp = false
+	if right is ast.CastExpr {
+		right.in_prexpr = true
+	}
+	mut or_stmts := []ast.Stmt{}
+	mut or_kind := ast.OrKind.absent
+	// allow `x := <-ch or {...}` to handle closed channel
+	if op == .arrow {
+		if p.tok.kind == .key_orelse {
+			p.next()
+			p.open_scope()
+			p.scope.register('errcode', ast.Var{
+				name: 'errcode'
+				typ: table.int_type
+				pos: p.tok.position()
+				is_used: true
+			})
+			p.scope.register('err', ast.Var{
+				name: 'err'
+				typ: table.string_type
+				pos: p.tok.position()
+				is_used: true
+			})
+			or_kind = .block
+			or_stmts = p.parse_block_no_scope(false)
+			p.close_scope()
+		}
+		if p.tok.kind == .question {
+			p.next()
+			or_kind = .propagate
+		}
+	}
 	return ast.PrefixExpr{
 		op: op
 		right: right
 		pos: pos
+		or_block: ast.OrExpr{
+			stmts: or_stmts
+			kind: or_kind
+			pos: pos
+		}
 	}
 }

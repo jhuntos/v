@@ -1,12 +1,15 @@
 import vmod
 
+import os
+
 fn test_from_file() {
+	os.chdir(os.dir(os.getenv('VEXE')))
 	data := vmod.from_file('./v.mod') or {
 		panic(err)
 	}
 	assert data.name == 'V'
 	assert data.description == 'The V programming language.'
-	assert data.version == '0.1.28'
+	assert data.version == '0.1.29'
 	assert data.dependencies.len == 0
 }
 
