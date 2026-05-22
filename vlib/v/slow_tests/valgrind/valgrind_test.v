@@ -1,8 +1,10 @@
+// vtest build: !musl? && !sanitized_job?
 import os
 import term
 import benchmark
 import v.util.vtest
 
+@[markused]
 const turn_off_vcolors = os.setenv('VCOLORS', 'never', true)
 
 fn bold(s string) string {
@@ -24,6 +26,8 @@ const skip_compile_files = [
 ]
 
 const skip_valgrind_files = [
+	'vlib/v/slow_tests/valgrind/1.strings_and_arrays.v',
+	'vlib/v/slow_tests/valgrind/autofree_or_block_string_interp.v',
 	'vlib/v/slow_tests/valgrind/struct_field.v',
 	'vlib/v/slow_tests/valgrind/fn_returning_string_param.v',
 	'vlib/v/slow_tests/valgrind/fn_with_return_should_free_local_vars.v',
@@ -31,6 +35,12 @@ const skip_valgrind_files = [
 	'vlib/v/slow_tests/valgrind/option_simple.v',
 	'vlib/v/slow_tests/valgrind/string_plus_string_plus.v',
 	'vlib/v/slow_tests/valgrind/import_x_json2.v',
+	'vlib/v/slow_tests/valgrind/comptime_selector.v',
+	'vlib/v/slow_tests/valgrind/2.heap_objects.v',
+	'vlib/v/slow_tests/valgrind/logging.v',
+	'vlib/v/slow_tests/valgrind/rand_module.v',
+	'vlib/v/slow_tests/valgrind/struct_of_array_of_same_struct.v',
+	'vlib/v/slow_tests/valgrind/sync.v',
 ]
 
 fn vprintln(s string) {
@@ -66,11 +76,11 @@ fn test_all() {
 	dir := os.join_path(vroot, valgrind_test_path)
 	mut files := os.ls(dir) or { panic(err) }
 	files.sort()
-	//
-	wrkdir := os.join_path(os.vtmp_dir(), 'v', 'tests', 'valgrind')
+
+	wrkdir := os.join_path(os.vtmp_dir(), 'valgrind_tests')
 	os.mkdir_all(wrkdir) or { panic(err) }
 	os.chdir(wrkdir) or {}
-	//
+
 	only_ordinary_v_files := files.filter(it.ends_with('.v') && !it.ends_with('_test.v'))
 	tests := vtest.filter_vtest_only(only_ordinary_v_files, basepath: valgrind_test_path)
 	bench.set_total_expected_steps(tests.len)
@@ -84,7 +94,12 @@ fn test_all() {
 			}
 		}
 		//
-		base_filename := os.file_name(test).replace('.v', '')
+		mut base_filename := os.file_name(test)
+		if base_filename.ends_with('.c.v') {
+			base_filename = base_filename#[..-4]
+		} else if base_filename.ends_with('.v') {
+			base_filename = base_filename#[..-2]
+		}
 		exe_filename := '${wrkdir}/${base_filename}'
 		full_path_to_source_file := os.join_path(vroot, test)
 		compile_cmd := '${os.quoted_path(vexe)} -o ${os.quoted_path(exe_filename)} -cg -cflags ' +

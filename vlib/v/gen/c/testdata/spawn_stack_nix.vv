@@ -1,3 +1,4 @@
+// vtest vflags: -arch i386
 module main
 
 fn main() {
@@ -15,13 +16,13 @@ fn my_print1() {
 }
 
 // 64KB  stack size
-[spawn_stack: 65536]
+@[spawn_stack: 65536]
 fn my_print2() {
 	println('ahoj svet')
 }
 
 // 128KB  stack size
-[spawn_stack: 131072]
+@[spawn_stack: 131072]
 fn my_print3() {
 	println('здравей свят')
 }

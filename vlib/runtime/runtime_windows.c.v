@@ -2,18 +2,12 @@ module runtime
 
 import os
 
-[typedef]
-struct C.SYSTEM_INFO {
-	dwNumberOfProcessors u32
-}
-
-[typedef]
-struct C.MEMORYSTATUS {
+@[typedef]
+pub struct C.MEMORYSTATUS {
 	dwTotalPhys usize
 	dwAvailPhys usize
 }
 
-fn C.GetSystemInfo(&C.SYSTEM_INFO)
 fn C.GlobalMemoryStatus(&C.MEMORYSTATUS)
 
 // nr_cpus returns the number of virtual CPU cores found on the system.
@@ -28,14 +22,14 @@ pub fn nr_cpus() int {
 }
 
 // total_memory returns total physical memory found on the system.
-pub fn total_memory() usize {
+pub fn total_memory() !usize {
 	memory_status := C.MEMORYSTATUS{}
 	C.GlobalMemoryStatus(&memory_status)
 	return memory_status.dwTotalPhys
 }
 
 // free_memory returns free physical memory found on the system.
-pub fn free_memory() usize {
+pub fn free_memory() !usize {
 	memory_status := C.MEMORYSTATUS{}
 	C.GlobalMemoryStatus(&memory_status)
 	return memory_status.dwAvailPhys

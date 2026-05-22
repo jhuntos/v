@@ -1,3 +1,4 @@
+// vtest build: !windows
 import os
 import net.smtp
 import time
@@ -9,10 +10,10 @@ fn fn_errors(mut c smtp.Client, m smtp.Mail) bool {
 }
 
 fn send_mail(starttls bool) {
-	client_cfg := smtp.Client{
-		server: 'smtp.mailtrap.io'
-		port: 465
-		from: 'dev@vlang.io'
+	client_cfg := smtp.Config{
+		server:   'smtp.mailtrap.io'
+		port:     465
+		from:     'dev@vlang.io'
 		username: os.getenv('VSMTP_TEST_USER')
 		password: os.getenv('VSMTP_TEST_PASS')
 		starttls: starttls
@@ -22,9 +23,9 @@ fn send_mail(starttls bool) {
 		exit(0)
 	}
 	send_cfg := smtp.Mail{
-		to: 'dev@vlang.io'
+		to:      'dev@vlang.io'
 		subject: 'Hello from V2'
-		body: 'Plain text'
+		body:    'Plain text'
 	}
 
 	mut client := smtp.new_client(client_cfg) or {
@@ -46,7 +47,7 @@ fn send_mail(starttls bool) {
 	}
 	client.send(smtp.Mail{
 		...send_cfg
-		cc: 'alexander@vlang.io,joe@vlang.io'
+		cc:  'alexander@vlang.io,joe@vlang.io'
 		bcc: 'spytheman@vlang.io'
 	}) or {
 		assert false
@@ -107,13 +108,13 @@ fn test_smtp_implicit_ssl() {
 		return
 	}
 
-	client_cfg := smtp.Client{
-		server: 'smtp.gmail.com'
-		port: 465
-		from: ''
+	client_cfg := smtp.Config{
+		server:   'smtp.gmail.com'
+		port:     465
+		from:     ''
 		username: ''
 		password: ''
-		ssl: true
+		ssl:      true
 	}
 
 	mut client := smtp.new_client(client_cfg) or {
@@ -122,6 +123,21 @@ fn test_smtp_implicit_ssl() {
 	}
 
 	assert client.is_open && client.encrypted
+}
+
+fn test_new_client_rejects_conflicting_tls_modes() {
+	client_cfg := smtp.Config{
+		server:   'smtp.example.com'
+		ssl:      true
+		starttls: true
+	}
+
+	smtp.new_client(client_cfg) or {
+		assert err.msg() == 'Can not use both implicit SSL and STARTTLS'
+		return
+	}
+
+	assert false
 }
 
 fn test_smtp_multiple_recipients() {

@@ -24,7 +24,7 @@ fn (mut ws Client) handshake() ! {
 	sb.write_string('\r\nSec-WebSocket-Version: 13')
 	for key in ws.header.keys() {
 		val := ws.header.custom_values(key).join(',')
-		sb.write_string('\r\n${key}:${val}')
+		sb.write_string('\r\n${key}: ${val}')
 	}
 	sb.write_string('\r\n\r\n')
 	handshake := sb.str()
@@ -50,12 +50,10 @@ fn (mut s Server) parse_client_handshake(client_handshake string, mut c Client) 
 		return error_with_code('unexpected get operation, ${get_tokens}', 1)
 	}
 	if get_tokens[0].trim_space() != 'GET' {
-		return error_with_code("unexpected request '${get_tokens[0]}', expected 'GET'",
-			2)
+		return error_with_code("unexpected request '${get_tokens[0]}', expected 'GET'", 2)
 	}
 	if get_tokens[2].trim_space() != 'HTTP/1.1' {
-		return error_with_code("unexpected request ${get_tokens}, expected 'HTTP/1.1'",
-			3)
+		return error_with_code("unexpected request ${get_tokens}, expected 'HTTP/1.1'", 3)
 	}
 	mut seckey := ''
 	mut flags := []Flag{}
@@ -90,9 +88,9 @@ fn (mut s Server) parse_client_handshake(client_handshake string, mut c Client) 
 	server_handshake := 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${seckey}\r\n\r\n'
 	server_client := &ServerClient{
 		resource_name: get_tokens[1]
-		client_key: key
-		client: unsafe { c }
-		server: unsafe { s }
+		client_key:    key
+		client:        unsafe { c }
+		server:        unsafe { s }
 	}
 	return server_handshake, server_client
 }
@@ -132,8 +130,7 @@ fn (mut ws Client) check_handshake_response(handshake_response string, seckey st
 	lines := handshake_response.split_into_lines()
 	header := lines[0]
 	if !header.starts_with('HTTP/1.1 101') && !header.starts_with('HTTP/1.0 101') {
-		return error_with_code('handshake_handler: invalid HTTP status response code, ${header}',
-			6)
+		return error_with_code('handshake_handler: invalid HTTP status response code, ${header}', 6)
 	}
 	for i in 1 .. lines.len {
 		if lines[i].len <= 0 || lines[i] == '\r\n' {

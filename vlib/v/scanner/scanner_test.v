@@ -1,16 +1,14 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
-// Use of this source code is governed by an MIT license
-// that can be found in the LICENSE file.
+// vtest build: !sanitized_job?
 module scanner
 
 import v.token
 import v.pref
 
 fn scan_kinds(text string) []token.Kind {
-	mut scanner := new_scanner(text, .skip_comments, &pref.Preferences{})
+	mut scanner := new_plain_scanner(text, .skip_comments, &pref.Preferences{})
 	mut token_kinds := []token.Kind{}
 	for {
-		tok := scanner.scan()
+		tok := scanner.text_scan()
 		if tok.kind == .eof {
 			break
 		}
@@ -20,10 +18,10 @@ fn scan_kinds(text string) []token.Kind {
 }
 
 fn scan_tokens(text string) []token.Token {
-	mut scanner := new_scanner(text, .parse_comments, &pref.Preferences{})
+	mut scanner := new_plain_scanner(text, .parse_comments, &pref.Preferences{})
 	mut tokens := []token.Token{}
 	for {
-		tok := scanner.scan()
+		tok := scanner.text_scan()
 		if tok.kind == .eof {
 			break
 		}
@@ -151,15 +149,13 @@ fn test_ref_ref_array_ref_ref_foo() {
 }
 
 fn test_escape_rune() {
-	// these lines work if the v compiler is working
-	// will not work until v compiler on github is updated
-	// assert `\x61` == `a`
-	// assert `\u0061` == `a`
+	assert `\x61` == `a`
+	assert `\u0061` == `a`
+	assert `\U00000061` == `a`
 
-	// will not work until PR is accepted
-	// assert `\141` == `a`
-	// assert `\xe2\x98\x85` == `★`
-	// assert `\342\230\205` == `★`
+	assert `\141` == `a`
+	assert `\xe2\x98\x85` == `★`
+	assert `\342\230\205` == `★`
 
 	// the following lines test the scanner module
 	// even before it is compiled into the v executable
@@ -180,8 +176,13 @@ fn test_escape_rune() {
 	assert result[0].kind == .chartoken
 	assert result[0].lit == r'\\'
 
-	// SINGLE CHAR UNICODE ESCAPE
+	// SINGLE CHAR 16-bit UNICODE ESCAPE
 	result = scan_tokens(r'`\u2605`')
+	assert result[0].kind == .chartoken
+	assert result[0].lit == r'★'
+
+	// SINGLE CHAR 32-bit UNICODE ESCAPE
+	result = scan_tokens(r'`\U00002605`')
 	assert result[0].kind == .chartoken
 	assert result[0].lit == r'★'
 
@@ -207,6 +208,7 @@ fn test_escape_string() {
 	assert '\x61' == 'a'
 	assert '\x62' == 'b'
 	assert '\u0061' == 'a'
+	assert '\U00000061' == 'a'
 	assert '\141' == 'a'
 	assert '\xe2\x98\x85' == '★'
 	assert '\342\230\205' == '★'
@@ -230,11 +232,19 @@ fn test_escape_string() {
 	assert result[0].kind == .string
 	assert result[0].lit == r'\\'
 
-	// STRING UNICODE ESCAPE
+	// STRING 16-bit UNICODE ESCAPE
 	result = scan_tokens(r"'\u2605'")
 	assert result[0].kind == .string
 	assert result[0].lit == r'★'
 	result = scan_tokens(r"'H\u2605H'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'H★H'
+
+	// STRING 32-bit UNICODE ESCAPE
+	result = scan_tokens(r"'\U00002605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'★'
+	result = scan_tokens(r"'H\U00002605H'")
 	assert result[0].kind == .string
 	assert result[0].lit == r'H★H'
 
@@ -249,7 +259,7 @@ fn test_escape_string() {
 	assert result[0].kind == .string
 	assert result[0].lit.bytes() == [u8(0xe2), `9`, `8`, `8`, `5`]
 
-	// MIX STRING ESCAPES
+	// MIX STRING ESCAPES with UTF-16 escapes
 	result = scan_tokens(r"'\x61\u2605'")
 	assert result[0].kind == .string
 	assert result[0].lit == r'a★'
@@ -257,7 +267,7 @@ fn test_escape_string() {
 	assert result[0].kind == .string
 	assert result[0].lit == r'★a'
 
-	// MIX STRING ESCAPES with offset
+	// MIX STRING ESCAPES with UTF-16 escapes with offset
 	result = scan_tokens(r"'x  \x61\u2605\x61'")
 	assert result[0].kind == .string
 	assert result[0].lit == r'x  a★a'
@@ -265,10 +275,79 @@ fn test_escape_string() {
 	assert result[0].kind == .string
 	assert result[0].lit == r'x  ★a★'
 
+	// MIX STRING ESCAPES with UTF-32 escapes
+	result = scan_tokens(r"'\x61\U00002605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'a★'
+	result = scan_tokens(r"'\U00002605\x61'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'★a'
+
+	// MIX STRING ESCAPES with UTF-32 escapes with offset
+	result = scan_tokens(r"'x  \x61\U00002605\x61'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'x  a★a'
+	result = scan_tokens(r"'x  \U00002605\x61\U00002605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'x  ★a★'
+
+	// MIX STRING ESCAPES with UTF-16 and UTF-32 escapes
+	result = scan_tokens(r"'\u2605\x61\U00002605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'★a★'
+	result = scan_tokens(r"'\U00002605\x61\u2605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'★a★'
+
+	// MIX STRING ESCAPES with UTF-16 and UTF-32 escapes with offset
+	result = scan_tokens(r"'x  \x61\U00002605\x61\u2605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'x  a★a★'
+	result = scan_tokens(r"'x  \x61\u2605\x61\U00002605'")
+	assert result[0].kind == .string
+	assert result[0].lit == r'x  a★a★'
+
 	// SHOULD RESULT IN ERRORS
 	// result = scan_tokens(r'`\x61\x61`') // should always result in an error
 	// result = scan_tokens(r"'\x'") // should always result in an error
 	// result = scan_tokens(r'`hello`') // should always result in an error
+}
+
+fn assert_str_interpolation_works(mlen int, text string) {
+	mut max_len := 0
+	mut scanner := new_plain_scanner(text, .skip_comments, &pref.Preferences{})
+	for {
+		tok := scanner.text_scan()
+		if scanner.str_helper_tokens.len > max_len {
+			max_len = scanner.str_helper_tokens.len
+		}
+		if tok.kind == .eof {
+			break
+		}
+	}
+	assert max_len == mlen
+	assert scanner.errors.len == 0
+	assert scanner.str_helper_tokens.len == 0
+}
+
+fn test_string_interpolation_with_nested_string_does_not_grow_str_helper_tokens_too_much() {
+	sinterpolation := " s := 'x \${if true { '{' } else { '}' }} y' "
+	assert_str_interpolation_works(3, sinterpolation)
+	assert_str_interpolation_works(3, sinterpolation + sinterpolation + sinterpolation)
+	assert_str_interpolation_works(3, '{'.repeat(100) + sinterpolation + '}'.repeat(100))
+	assert_str_interpolation_works(0, '{'.repeat(100) + '}'.repeat(100))
+}
+
+fn test_dollar_sign_is_literal_without_braces() {
+	mut result := scan_tokens("'a$b'")
+	assert result.len == 1
+	assert result[0].kind == .string
+	assert result[0].lit == 'a$b'
+
+	result = scan_tokens('"a$b"')
+	assert result.len == 1
+	assert result[0].kind == .string
+	assert result[0].lit == 'a$b'
 }
 
 fn test_comment_string() {

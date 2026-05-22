@@ -1,20 +1,19 @@
 module main
 
 import gg
-import gx
 import sokol.sapp
 
 fn main() {
 	mut ctx := gg.new_context(
-		bg_color: gx.white
+		bg_color:     gg.white
 		window_title: 'Cursor'
-		frame_fn: frame
-		init_fn: init
+		frame_fn:     frame
+		init_fn:      init
 	)
 	ctx.run()
 }
 
-fn init(mut ctx gg.Context) {
+fn init(mut _ctx gg.Context) {
 	sapp.set_mouse_cursor(.ibeam)
 }
 

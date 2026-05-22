@@ -6,22 +6,35 @@ import v.pref
 import v.errors
 import v.util
 import v.ast
+import v.ast.walker
 import v.vmod
 import v.checker
 import v.transformer
+import v.comptime
+import v.generics
 import v.parser
 import v.markused
 import v.depgraph
 import v.callgraph
 import v.dotgraph
+// import x.json2
+
+fn append_map_array(mut items map[string][]string, key string, value string) {
+	if key !in items {
+		items[key] = []string{}
+	}
+	items[key] << value
+}
 
 pub struct Builder {
 pub:
 	compiled_dir string // contains os.real_path() of the dir of the final file being compiled, or the dir itself when doing `v .`
 	module_path  string
 pub mut:
-	checker             &checker.Checker = unsafe { nil }
+	checker             &checker.Checker         = unsafe { nil }
 	transformer         &transformer.Transformer = unsafe { nil }
+	comptime            &comptime.Comptime       = unsafe { nil }
+	generics            &generics.Generics       = unsafe { nil }
 	out_name_c          string
 	out_name_js         string
 	stats_lines         int // size of backend generated source code in lines
@@ -37,13 +50,30 @@ pub mut:
 	//}
 	table     &ast.Table = unsafe { nil }
 	ccoptions CcompilerOptions
-	//
 	// Note: changes in mod `builtin` force invalidation of every other .v file
 	mod_invalidates_paths map[string][]string // changes in mod `os`, invalidate only .v files, that do `import os`
 	mod_invalidates_mods  map[string][]string // changes in mod `os`, force invalidation of mods, that do `import os`
 	path_invalidates_mods map[string][]string // changes in a .v file from `os`, invalidates `os`
-	crun_cache_keys       []string // target executable + top level source files; filled in by Builder.should_rebuild
-	executable_exists     bool     // if the executable already exists, don't remove new executable after `v run`
+	crun_cache_keys       []string            // target executable + top level source files; filled in by Builder.should_rebuild
+	executable_exists     bool                // if the executable already exists, don't remove new executable after `v run`
+	str_args              string              // for parallel_cc mode only, to know which cc args to use (like -I etc)
+	disable_flto          bool
+}
+
+struct CFunctionCallCollector {
+mut:
+	names map[string]bool
+}
+
+fn c_function_call_collector_visit(node &ast.Node, data voidptr) bool {
+	mut c := unsafe { &CFunctionCallCollector(data) }
+	if node is ast.Expr && node is ast.CallExpr {
+		call := node as ast.CallExpr
+		if call.name.starts_with('C.') {
+			c.names[call.name] = true
+		}
+	}
+	return true
 }
 
 pub fn new_builder(pref_ &pref.Preferences) Builder {
@@ -57,15 +87,14 @@ pub fn new_builder(pref_ &pref.Preferences) Builder {
 	if pref_.use_color == .never {
 		util.emanager.set_support_color(false)
 	}
-	table.pointer_size = if pref_.m64 { 8 } else { 4 }
+	table.pointer_size = if pref_.m64 && pref_.backend != .wasm { 8 } else { 4 }
 	mut msvc := MsvcResult{}
-	$if windows {
-		msvc = find_msvc(pref_.m64) or {
-			if pref_.ccompiler == 'msvc' {
-				// verror('cannot find MSVC on this OS')
-			}
-			MsvcResult{
-				valid: false
+	if pref_.ccompiler_type == .msvc || pref.cc_from_string(pref_.ccompiler) == .msvc {
+		$if windows {
+			msvc = find_msvc(pref_.m64) or {
+				MsvcResult{
+					valid: false
+				}
 			}
 		}
 	}
@@ -78,20 +107,56 @@ pub fn new_builder(pref_ &pref.Preferences) Builder {
 		executable_name += '.exe'
 	}
 	return Builder{
-		pref: pref_
-		table: table
-		checker: checker.new_checker(table, pref_)
-		transformer: transformer.new_transformer_with_table(table, pref_)
-		compiled_dir: compiled_dir
-		cached_msvc: msvc
+		pref:              pref_
+		table:             table
+		checker:           checker.new_checker(table, pref_)
+		transformer:       transformer.new_transformer_with_table(table, pref_)
+		comptime:          comptime.new_comptime_with_table(table, pref_)
+		generics:          generics.new_generics_with_table(table, pref_)
+		compiled_dir:      compiled_dir
+		cached_msvc:       msvc
 		executable_exists: os.is_file(executable_name)
 	}
 }
 
+fn (v &Builder) msvc_object_path(path string) string {
+	path_without_obj_postfix := if path.ends_with('.obj') {
+		path[..path.len - 4]
+	} else if path.ends_with('.o') {
+		path[..path.len - 2]
+	} else {
+		path
+	}
+	return os.real_path(if v.pref.is_debug {
+		// MSVC debug builds use /MDd, so they need their own thirdparty object files.
+		'${path_without_obj_postfix}.debug.obj'
+	} else {
+		'${path_without_obj_postfix}.obj'
+	})
+}
+
+fn (mut v Builder) msvc_thirdparty_obj_path(mod string, path string, cached_path string) string {
+	base_path := if cached_path != '' {
+		cached_path
+	} else {
+		// Reuse the cache-derived .o path so different targets/options do not share one .obj.
+		v.pref.cache_manager.mod_postfix_with_key2cpath(mod, '.o', os.real_path(path))
+	}
+	return v.msvc_object_path(base_path)
+}
+
 pub fn (mut b Builder) interpret_text(code string, v_files []string) ! {
-	b.parsed_files = parser.parse_files(v_files, b.table, b.pref)
-	b.parsed_files << parser.parse_text(code, '', b.table, .skip_comments, b.pref)
+	b.parsed_files = parser.parse_files(v_files, mut b.table, b.pref)
+	b.parsed_files << parser.parse_text(code, '', mut b.table, .skip_comments, b.pref)
+	if b.should_stop_after_frontend_error() && b.has_frontend_errors() {
+		exit(1)
+	}
 	b.parse_imports()
+	b.check_unused_imports()
+	b.print_frontend_builder_errors()
+	if b.should_stop_after_frontend_error() && b.has_frontend_errors() {
+		exit(1)
+	}
 
 	if b.pref.only_check_syntax {
 		return error_with_code('stop_after_parser', 7001)
@@ -109,10 +174,18 @@ pub fn (mut b Builder) front_stages(v_files []string) ! {
 	util.timing_start('PARSE')
 
 	util.timing_start('Builder.front_stages.parse_files')
-	b.parsed_files = parser.parse_files(v_files, b.table, b.pref)
+	b.parsed_files = parser.parse_files(v_files, mut b.table, b.pref)
 	timers.show('Builder.front_stages.parse_files')
+	if b.should_stop_after_frontend_error() && b.has_frontend_errors() {
+		exit(1)
+	}
 
 	b.parse_imports()
+	b.check_unused_imports()
+	b.print_frontend_builder_errors()
+	if b.should_stop_after_frontend_error() && b.has_frontend_errors() {
+		exit(1)
+	}
 
 	timers.show('SCAN')
 	timers.show('PARSE')
@@ -130,10 +203,42 @@ pub fn (mut b Builder) middle_stages() ! {
 	util.timing_measure('Checker.generic_insts_to_concrete')
 
 	b.checker.check_files(b.parsed_files)
+	util.timing_start('Checker.generic_insts_to_concrete.after_check')
+	b.table.generic_insts_to_concrete()
+	util.timing_measure('Checker.generic_insts_to_concrete.after_check')
 	util.timing_measure('CHECK')
+	$if trace_type_symbols_after_checker ? {
+		for t, s in b.table.type_symbols {
+			println('> t: ${t:10} | s.mod: ${s.mod:-40} | s.name: ${'${s.name#[..30]}':-30} | s.is_builtin: ${s.is_builtin:6} | s.is_pub: ${s.is_pub}')
+		}
+	}
+
+	if b.pref.new_generic_solver {
+		util.timing_start('GENERICS')
+		b.generics.solve_files(b.parsed_files)
+		util.timing_start('Checker.generic_insts_to_concrete.after_generics')
+		b.table.generic_insts_to_concrete()
+		util.timing_measure('Checker.generic_insts_to_concrete.after_generics')
+		util.timing_measure('GENERICS')
+	}
+
+	util.timing_start('COMPTIME')
+	b.comptime.solve_files(b.parsed_files)
+	util.timing_measure('COMPTIME')
+
+	if b.pref.dump_defines != '' {
+		b.dump_defines()
+	}
+	mut mcache := vmod.get_cache()
+	mcache.debug()
 	b.print_warnings_and_errors()
 	if b.checker.should_abort {
 		return error('too many errors/warnings/notices')
+	}
+	if b.checker.unresolved_fixed_sizes.len > 0 {
+		util.timing_start('Checker.update_unresolved_fixed_sizes')
+		b.checker.update_unresolved_fixed_sizes()
+		util.timing_measure('Checker.update_unresolved_fixed_sizes')
 	}
 	if b.pref.check_only {
 		return error_with_code('stop_after_checker', 8001)
@@ -141,10 +246,10 @@ pub fn (mut b Builder) middle_stages() ! {
 	util.timing_start('TRANSFORM')
 	b.transformer.transform_files(b.parsed_files)
 	util.timing_measure('TRANSFORM')
-	//
+
 	b.table.complete_interface_check()
 	if b.pref.skip_unused {
-		markused.mark_used(mut b.table, b.pref, b.parsed_files)
+		markused.mark_used(mut b.table, mut b.pref, b.parsed_files)
 	}
 	if b.pref.show_callgraph {
 		callgraph.show(mut b.table, b.pref, b.parsed_files)
@@ -154,6 +259,17 @@ pub fn (mut b Builder) middle_stages() ! {
 pub fn (mut b Builder) front_and_middle_stages(v_files []string) ! {
 	b.front_stages(v_files)!
 	b.middle_stages()!
+}
+
+@[inline]
+fn (b &Builder) should_stop_after_frontend_error() bool {
+	return b.pref.fatal_errors
+		|| (b.pref.output_mode == .stdout && !b.pref.check_only && !b.pref.is_vls)
+}
+
+@[inline]
+fn (b &Builder) has_frontend_errors() bool {
+	return b.parsed_files.any(it.errors.len > 0)
 }
 
 // parse all deps from already parsed files
@@ -166,7 +282,7 @@ pub fn (mut b Builder) parse_imports() {
 	if b.pref.is_vsh {
 		done_imports << 'os'
 	}
-	// TODO (joe): decide if this is correct solution.
+	// TODO: (joe): decide if this is correct solution.
 	// in the case of building a module, the actual module files
 	// are passed via cmd line, so they have already been parsed
 	// by this stage. note that if one files from a module was
@@ -186,15 +302,15 @@ pub fn (mut b Builder) parse_imports() {
 	// so we can not use the shorter `for in` form.
 	for i := 0; i < b.parsed_files.len; i++ {
 		ast_file := b.parsed_files[i]
-		b.path_invalidates_mods[ast_file.path] << ast_file.mod.name
+		append_map_array(mut b.path_invalidates_mods, ast_file.path, ast_file.mod.name)
 		if ast_file.mod.name != 'builtin' {
-			b.mod_invalidates_paths['builtin'] << ast_file.path
-			b.mod_invalidates_mods['builtin'] << ast_file.mod.name
+			append_map_array(mut b.mod_invalidates_paths, 'builtin', ast_file.path)
+			append_map_array(mut b.mod_invalidates_mods, 'builtin', ast_file.mod.name)
 		}
 		for imp in ast_file.imports {
 			mod := imp.mod
-			b.mod_invalidates_paths[mod] << ast_file.path
-			b.mod_invalidates_mods[mod] << ast_file.mod.name
+			append_map_array(mut b.mod_invalidates_paths, mod, ast_file.path)
+			append_map_array(mut b.mod_invalidates_mods, mod, ast_file.mod.name)
 			if mod == 'builtin' {
 				b.parsed_files[i].errors << b.error_with_pos('cannot import module "builtin"',
 					ast_file.path, imp.pos)
@@ -204,7 +320,7 @@ pub fn (mut b Builder) parse_imports() {
 				continue
 			}
 			import_path := b.find_module_path(mod, ast_file.path) or {
-				// v.parsers[i].error_with_token_index('cannot import module "$mod" (not found)', v.parsers[i].import_ast.get_import_tok_idx(mod))
+				// v.parsers[i].error_with_token_index('cannot import module "${mod}" (not found)', v.parsers[i].import_ast.get_import_tok_idx(mod))
 				// break
 				b.parsed_files[i].errors << b.error_with_pos('cannot import module "${mod}" (not found)',
 					ast_file.path, imp.pos)
@@ -212,14 +328,14 @@ pub fn (mut b Builder) parse_imports() {
 			}
 			v_files := b.v_files_from_dir(import_path)
 			if v_files.len == 0 {
-				// v.parsers[i].error_with_token_index('cannot import module "$mod" (no .v files in "$import_path")', v.parsers[i].import_ast.get_import_tok_idx(mod))
+				// v.parsers[i].error_with_token_index('cannot import module "${mod}" (no .v files in "${import_path}")', v.parsers[i].import_ast.get_import_tok_idx(mod))
 				b.parsed_files[i].errors << b.error_with_pos('cannot import module "${mod}" (no .v files in "${import_path}")',
 					ast_file.path, imp.pos)
 				continue
 			}
-			// eprintln('>> ast_file.path: $ast_file.path , done: $done_imports, `import $mod` => $v_files')
+			// eprintln('>> ast_file.path: ${ast_file.path} , done: ${done_imports}, `import ${mod}` => ${v_files}')
 			// Add all imports referenced by these libs
-			parsed_files := parser.parse_files(v_files, b.table, b.pref)
+			parsed_files := parser.parse_files(v_files, mut b.table, b.pref)
 			for file in parsed_files {
 				mut name := file.mod.name
 				if name == '' {
@@ -233,18 +349,26 @@ pub fn (mut b Builder) parse_imports() {
 				}
 			}
 			b.parsed_files << parsed_files
+			if b.should_stop_after_frontend_error() && parsed_files.any(it.errors.len > 0) {
+				return
+			}
 			done_imports << mod
 		}
 	}
 	b.resolve_deps()
+	$if trace_parsed_files ? {
+		b.show_parsed_files()
+	}
 	if b.pref.print_v_files {
-		for p in b.parsed_files {
-			println(p.path)
-		}
+		b.show_parsed_files()
 		exit(0)
 	}
 	if b.pref.print_watched_files {
 		for p in b.parsed_files {
+			if p.is_parse_text {
+				// a generated snippet, `v watch` does not care about those, since they are duplicates for other files
+				continue
+			}
 			println(p.path)
 			for tp in p.template_paths {
 				println(tp)
@@ -293,7 +417,7 @@ pub fn (mut b Builder) resolve_deps() {
 			for pf in b.parsed_files {
 				if m == pf.mod.name {
 					reordered_parsed_files << pf
-					// eprintln('pf.mod.name: $pf.mod.name | pf.path: $pf.path')
+					// eprintln('pf.mod.name: ${pf.mod.name} | pf.path: ${pf.path}')
 				}
 			}
 		}
@@ -302,22 +426,134 @@ pub fn (mut b Builder) resolve_deps() {
 	}
 }
 
+fn import_alias_for_mod(file &ast.File, mod string) ?string {
+	for import_m in file.imports {
+		if import_m.mod == mod {
+			return import_m.alias
+		}
+	}
+	return none
+}
+
+fn register_used_import(mut file ast.File, alias string) {
+	if alias !in file.used_imports {
+		file.used_imports << alias
+	}
+}
+
+fn file_needs_c_function_call_import_scan(file &ast.File) bool {
+	for import_m in file.imports {
+		alias := import_m.alias
+		if (alias.len == 1 && alias[0] == `_`) || alias in file.used_imports
+			|| alias in file.auto_imports {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+fn (mut b Builder) collect_used_c_function_calls(file &ast.File) map[string]bool {
+	mut collector := CFunctionCallCollector{
+		names: map[string]bool{}
+	}
+	walker.inspect(file, &collector, c_function_call_collector_visit)
+	return collector.names
+}
+
+fn (mut b Builder) mark_imports_used_by_c_function_calls() {
+	for mut file in b.parsed_files {
+		if !file_needs_c_function_call_import_scan(file) {
+			continue
+		}
+		used_c_calls := b.collect_used_c_function_calls(file)
+		if used_c_calls.len == 0 {
+			continue
+		}
+		for c_name, _ in used_c_calls {
+			if c_fn := b.table.find_fn(c_name) {
+				alias := import_alias_for_mod(file, c_fn.mod) or { continue }
+				register_used_import(mut file, alias)
+				continue
+			}
+			c_typ := b.table.find_type(c_name)
+			if c_typ == 0 {
+				continue
+			}
+			c_sym := b.table.sym(c_typ)
+			if c_sym.kind == .placeholder {
+				continue
+			}
+			alias := import_alias_for_mod(file, c_sym.mod) or { continue }
+			register_used_import(mut file, alias)
+		}
+	}
+}
+
+fn (mut b Builder) add_unused_import_message(mut file ast.File, message string, pos token.Pos) {
+	file_path := if pos.file_idx < 0 { file.path } else { b.table.filelist[pos.file_idx] }
+	if b.pref.warns_are_errors {
+		err := errors.Error{
+			file_path: file_path
+			pos:       pos
+			reporter:  .parser
+			message:   message
+		}
+		file.errors << err
+		if b.pref.output_mode == .stdout && !b.pref.check_only {
+			util.show_compiler_message('error:', err.CompilerMessage)
+		}
+		return
+	}
+	if b.pref.skip_warnings {
+		return
+	}
+	wrn := errors.Warning{
+		file_path: file_path
+		pos:       pos
+		reporter:  .parser
+		message:   message
+	}
+	file.warnings << wrn
+	if b.pref.output_mode == .stdout && !b.pref.check_only {
+		util.show_compiler_message('warning:', wrn.CompilerMessage)
+	}
+}
+
+fn (mut b Builder) check_unused_imports() {
+	if b.pref.is_repl || b.pref.is_fmt {
+		return
+	}
+	b.mark_imports_used_by_c_function_calls()
+	for mut file in b.parsed_files {
+		for import_m in file.imports {
+			alias := import_m.alias
+			mod := import_m.mod
+			if (alias.len == 1 && alias[0] == `_`) || alias in file.used_imports
+				|| alias in file.auto_imports {
+				continue
+			}
+			mod_alias := if alias == mod { alias } else { '${alias} (${mod})' }
+			b.add_unused_import_message(mut file,
+				"module '${mod_alias}' is imported but never used. Use `import ${mod_alias} as _`, to silence this warning, or just remove the unused import line",
+				import_m.mod_pos)
+		}
+	}
+}
+
 // graph of all imported modules
 pub fn (b &Builder) import_graph() &depgraph.DepGraph {
 	builtins := util.builtin_module_parts.clone()
 	mut graph := depgraph.new_dep_graph()
 	for p in b.parsed_files {
-		// eprintln('p.path: $p.path')
+		// eprintln('p.path: ${p.path}')
 		mut deps := []string{}
 		if p.mod.name !in builtins {
 			deps << 'builtin'
 			if b.pref.backend == .c {
-				// TODO JavaScript backend doesn't handle os for now
+				// TODO: JavaScript backend doesn't handle os for now
 				// os import libraries so we exclude anything which could cause a loop
-				// git grep import vlib/os | cut -f2 -d: | cut -f2 -d" " | sort -u
-				// dl, os, os.cmdline, os.filelock, os.notify, strings, strings.textscanner, term.termios, time
-				if b.pref.is_vsh
-					&& p.mod.name !in ['os', 'dl', 'strings.textscanner', 'term.termios'] {
+				if p.path.ends_with('.vsh') {
 					deps << 'os'
 				}
 			}
@@ -336,7 +572,7 @@ pub fn (b &Builder) import_graph() &depgraph.DepGraph {
 	return graph
 }
 
-pub fn (b Builder) v_files_from_dir(dir string) []string {
+pub fn (b &Builder) v_files_from_dir(dir string) []string {
 	if !os.exists(dir) {
 		if dir == 'compiler' && os.is_dir('vlib') {
 			println('looks like you are trying to build V with an old command')
@@ -347,48 +583,250 @@ pub fn (b Builder) v_files_from_dir(dir string) []string {
 		verror("${dir} isn't a directory!")
 	}
 	mut files := os.ls(dir) or { panic(err) }
+	mut source_dir := os.real_path(dir)
 	if b.pref.is_verbose {
 		println('v_files_from_dir ("${dir}")')
 	}
-	res := b.pref.should_compile_filtered_files(dir, files)
+	mut res := b.pref.should_compile_filtered_files(dir, files)
 	if res.len == 0 {
-		// Perhaps the .v files are stored in /src/ ?
-		src_path := os.join_path(dir, 'src')
-		if os.is_dir(src_path) {
-			if b.pref.is_verbose {
-				println('v_files_from_dir ("${src_path}") (/src/)')
+		// An explicit `base_url` in v.mod still re-homes the source folder.
+		if source_root := source_root_from_vmod_root(dir) {
+			if source_root != dir && os.is_dir(source_root) {
+				if b.pref.is_verbose {
+					println('v_files_from_dir ("${source_root}") (v.mod base_url)')
+				}
+				files = os.ls(source_root) or { panic(err) }
+				source_dir = os.real_path(source_root)
+				res = b.pref.should_compile_filtered_files(source_root, files)
 			}
-			files = os.ls(src_path) or { panic(err) }
-			return b.pref.should_compile_filtered_files(src_path, files)
 		}
+		if res.len == 0 {
+			report_removed_src_layout_if_any(dir)
+		}
+	}
+	return b.with_same_module_subdir_files(source_dir, res)
+}
+
+// report_removed_src_layout_if_any prints a clear error if `dir` still relies on
+// the removed virtual `src/` module layout (sources under `dir/src/` instead of
+// at the module root). The explicit `base_url` opt-in in v.mod is unaffected.
+fn report_removed_src_layout_if_any(dir string) {
+	src_dir := os.join_path(dir, 'src')
+	if !os.is_dir(src_dir) {
+		return
+	}
+	src_files := os.ls(src_dir) or { return }
+	mut has_v_files := false
+	for f in src_files {
+		if f.ends_with('.v') {
+			has_v_files = true
+			break
+		}
+	}
+	if !has_v_files {
+		return
+	}
+	verror('the virtual `src/` module directory is no longer supported.\nV found .v source files under ${src_dir}, but will not treat `src/` as a virtual module root anymore.\nPlease move the sources up from `src/` into ${dir}:\n\tmv ${src_dir}/*.v ${dir}/\n\trmdir ${src_dir}\n\nIf you want to split one module across subdirectories after moving the root files, add `subdirs` to v.mod, for example:\n\tsubdirs: [\'admin\', \'repo\', \'commit\', \'ci\', \'security\', \'ssh\', \'user\']')
+}
+
+fn (b &Builder) with_same_module_subdir_files(source_dir string, v_files []string) []string {
+	mut mcache := vmod.get_cache()
+	vmod_file_location := mcache.get_by_folder(source_dir)
+	if vmod_file_location.vmod_file == '' {
+		return v_files
+	}
+	module_source_root := b.module_source_root(vmod_file_location.vmod_folder)
+	if source_dir != module_source_root {
+		return v_files
+	}
+	manifest := vmod.from_file(vmod_file_location.vmod_file) or { return v_files }
+	subdirs := manifest.unknown['subdirs'] or { return v_files }
+	if subdirs.len == 0 {
+		return v_files
+	}
+	mut res := v_files.clone()
+	mut seen := map[string]bool{}
+	for file in res {
+		seen[os.real_path(file)] = true
+	}
+	for subdir in subdirs {
+		normalized_subdir := normalize_same_module_subdir(subdir, manifest.base_url) or { continue }
+		subdir_path := os.join_path(module_source_root, normalized_subdir)
+		b.collect_same_module_v_files(vmod_file_location.vmod_folder, subdir_path, mut seen, mut
+			res)
 	}
 	return res
 }
 
-pub fn (b Builder) log(s string) {
+fn (b &Builder) module_source_root(module_root string) string {
+	real_module_root := os.real_path(module_root)
+	if source_root := source_root_from_vmod_root(real_module_root) {
+		if source_root != real_module_root && os.is_dir(source_root) {
+			return os.real_path(source_root)
+		}
+	}
+	return real_module_root
+}
+
+fn normalize_same_module_subdir(subdir string, base_url string) !string {
+	mut normalized := os.norm_path(subdir.trim_space().replace('\\', os.path_separator).replace('/',
+		os.path_separator))
+	if normalized == '' || normalized == '.' || os.is_abs_path(normalized) {
+		return error('invalid subdir')
+	}
+	if base_url != '' {
+		base := os.norm_path(base_url).trim_left(os.path_separator).trim_right(os.path_separator)
+		if base != '' {
+			base_prefix := base + os.path_separator
+			if normalized == base {
+				return error('invalid subdir')
+			}
+			if normalized.starts_with(base_prefix) {
+				normalized = normalized.all_after(base_prefix)
+			}
+		}
+	}
+	normalized = normalized.trim_left(os.path_separator).trim_right(os.path_separator)
+	if normalized == '' {
+		return error('invalid subdir')
+	}
+	parts := normalized.split(os.path_separator)
+	if '' in parts || '.' in parts || '..' in parts {
+		return error('invalid subdir')
+	}
+	return normalized
+}
+
+fn (b &Builder) collect_same_module_v_files(module_root string, dir string, mut seen map[string]bool, mut res []string) {
+	if !os.is_dir(dir) {
+		return
+	}
+	real_dir := os.real_path(dir)
+	if real_dir != os.real_path(module_root) && os.is_file(os.join_path(real_dir, 'v.mod')) {
+		return
+	}
+	mut entries := os.ls(real_dir) or { return }
+	entries.sort()
+	for file in b.pref.should_compile_filtered_files(real_dir, entries) {
+		real_file := os.real_path(file)
+		if real_file !in seen {
+			seen[real_file] = true
+			res << file
+		}
+	}
+	for entry in entries {
+		subdir_path := os.join_path(real_dir, entry)
+		if os.is_dir(subdir_path) {
+			b.collect_same_module_v_files(module_root, subdir_path, mut seen, mut res)
+		}
+	}
+}
+
+pub fn (b &Builder) log(s string) {
 	if b.pref.is_verbose {
 		println(s)
 	}
 }
 
-pub fn (b Builder) info(s string) {
+pub fn (b &Builder) info(s string) {
 	if b.pref.is_verbose {
 		println(s)
 	}
 }
 
-[inline]
+@[inline]
 pub fn module_path(mod string) string {
 	// submodule support
 	return mod.replace('.', os.path_separator)
 }
 
+fn manifest_from_vmod_root(vmod_root string) !vmod.Manifest {
+	vmod_path := os.join_path(vmod_root, 'v.mod')
+	if !os.is_file(vmod_path) {
+		return error('module not found')
+	}
+	return vmod.from_file(vmod_path) or { return error('module not found') }
+}
+
+fn source_root_from_vmod_root(vmod_root string) !string {
+	manifest := manifest_from_vmod_root(vmod_root)!
+	if manifest.base_url == '' {
+		return error('module not found')
+	}
+	return manifest.source_root(vmod_root)
+}
+
+fn find_module_path_from_vmod_root(vmod_root string, mod string) !string {
+	manifest := manifest_from_vmod_root(vmod_root)!
+	if manifest.base_url == '' {
+		return error('module not found')
+	}
+	tail_path := mod_tail_after_vmod_name(mod, manifest.name) or {
+		return error('module not found')
+	}
+	if tail_path == '' {
+		return error('module not found')
+	}
+	try_path := os.join_path(manifest.source_root(vmod_root), tail_path)
+	if os.is_dir(try_path) {
+		return try_path
+	}
+	return error('module not found')
+}
+
+fn find_module_path_from_search_root(search_path string, mod string) !string {
+	mod_path := module_path(mod)
+	try_path := os.join_path_single(search_path, mod_path)
+	if os.is_dir(try_path) {
+		return try_path
+	}
+	if src_try_path := find_module_path_from_vmod_root(search_path, mod) {
+		return src_try_path
+	}
+	mod_parts := mod.split('.')
+	for i := mod_parts.len - 1; i > 0; i-- {
+		candidate_root := os.join_path_single(search_path, mod_parts[..i].join(os.path_separator))
+		if !os.is_file(os.join_path(candidate_root, 'v.mod')) {
+			continue
+		}
+		source_root := source_root_from_vmod_root(candidate_root) or { continue }
+		submodule_path := mod_parts[i..].join(os.path_separator)
+		src_try_path := os.join_path(source_root, submodule_path)
+		if os.is_dir(src_try_path) {
+			return src_try_path
+		}
+	}
+	return error('module not found')
+}
+
+fn mod_tail_after_vmod_name(mod string, vmod_name string) !string {
+	if vmod_name == '' {
+		return error('module not found')
+	}
+	mod_parts := mod.split('.')
+	vmod_parts := vmod_name.split('.')
+	for i := 0; i + vmod_parts.len <= mod_parts.len; i++ {
+		if i > 1 {
+			break
+		}
+		if mod_parts[i..i + vmod_parts.len].join('.') == vmod_name {
+			return mod_parts[i + vmod_parts.len..].join(os.path_separator)
+		}
+	}
+	return error('module not found')
+}
+
+fn (b &Builder) module_path_has_v_files(path string) bool {
+	return b.v_files_from_dir(path).len > 0
+}
+
 // TODO: try to merge this & util.module functions to create a
 // reliable multi use function. see comments in util/module.v
 pub fn (b &Builder) find_module_path(mod string, fpath string) !string {
-	// support @VROOT/v.mod relative paths:
+	// support @VEXEROOT/v.mod relative paths:
 	mut mcache := vmod.get_cache()
-	vmod_file_location := mcache.get_by_file(fpath)
+	resolved_fpath := os.real_path(fpath)
+	vmod_file_location := mcache.get_by_file(resolved_fpath)
 	mod_path := module_path(mod)
 	mut module_lookup_paths := []string{}
 	if vmod_file_location.vmod_file.len != 0
@@ -396,11 +834,10 @@ pub fn (b &Builder) find_module_path(mod string, fpath string) !string {
 		module_lookup_paths << vmod_file_location.vmod_folder
 	}
 	module_lookup_paths << b.module_search_paths
-	module_lookup_paths << os.getwd()
 	// go up through parents looking for modules a folder.
 	// we need a proper solution that works most of the time. look at vdoc.get_parent_mod
-	if fpath.contains(os.path_separator + 'modules' + os.path_separator) {
-		parts := fpath.split(os.path_separator)
+	if resolved_fpath.contains(os.path_separator + 'modules' + os.path_separator) {
+		parts := resolved_fpath.split(os.path_separator)
 		for i := parts.len - 2; i >= 0; i-- {
 			if parts[i] == 'modules' {
 				module_lookup_paths << parts[0..i + 1].join(os.path_separator)
@@ -408,29 +845,56 @@ pub fn (b &Builder) find_module_path(mod string, fpath string) !string {
 			}
 		}
 	}
+	mut empty_module_path := ''
 	for search_path in module_lookup_paths {
 		try_path := os.join_path(search_path, mod_path)
 		if b.pref.is_verbose {
 			println('  >> trying to find ${mod} in ${try_path} ..')
 		}
-		if os.is_dir(try_path) {
-			if b.pref.is_verbose {
-				println('  << found ${try_path} .')
+		if found_path := find_module_path_from_search_root(search_path, mod) {
+			if b.module_path_has_v_files(found_path) {
+				if b.pref.is_verbose {
+					println('  << found ${found_path} .')
+				}
+				return found_path
 			}
-			return try_path
+			if empty_module_path == '' {
+				empty_module_path = found_path
+			}
+			if b.pref.is_verbose {
+				println('  << skipped ${found_path} (no .v files) .')
+			}
 		}
 	}
 	// look up through parents
-	path_parts := fpath.split(os.path_separator)
-	for i := path_parts.len - 2; i > 0; i-- {
-		p1 := path_parts[0..i].join(os.path_separator)
-		try_path := os.join_path(p1, mod_path)
+	mut current_dir := os.dir(resolved_fpath)
+	for {
+		try_path := os.join_path(current_dir, mod_path)
 		if b.pref.is_verbose {
 			println('  >> trying to find ${mod} in ${try_path} ..')
 		}
-		if os.is_dir(try_path) {
-			return try_path
+		if found_path := find_module_path_from_search_root(current_dir, mod) {
+			if b.module_path_has_v_files(found_path) {
+				if b.pref.is_verbose {
+					println('  << found ${found_path} .')
+				}
+				return found_path
+			}
+			if empty_module_path == '' {
+				empty_module_path = found_path
+			}
+			if b.pref.is_verbose {
+				println('  << skipped ${found_path} (no .v files) .')
+			}
 		}
+		parent_dir := os.dir(current_dir)
+		if parent_dir == current_dir {
+			break
+		}
+		current_dir = parent_dir
+	}
+	if empty_module_path != '' {
+		return empty_module_path
 	}
 	smodule_lookup_paths := module_lookup_paths.join(', ')
 	return error('module "${mod}" not found in:\n${smodule_lookup_paths}')
@@ -441,9 +905,9 @@ pub fn (b &Builder) show_total_warns_and_errors_stats() {
 		return
 	}
 	if b.pref.is_stats {
-		mut nr_errors := b.checker.errors.len
-		mut nr_warnings := b.checker.warnings.len
-		mut nr_notices := b.checker.notices.len
+		mut nr_errors := b.checker.nr_errors
+		mut nr_warnings := b.checker.nr_warnings
+		mut nr_notices := b.checker.nr_notices
 
 		if b.pref.check_only {
 			nr_errors = b.nr_errors
@@ -461,16 +925,16 @@ pub fn (b &Builder) show_total_warns_and_errors_stats() {
 			println('checker summary: ${estring} V errors, ${wstring} V warnings, ${nstring} V notices')
 		}
 	}
-	if b.checker.nr_errors > 0 && b.pref.path.ends_with('.v') && os.is_file(b.pref.path) {
-		for err in b.checker.errors {
-			if err.message.starts_with('unknown ') {
-				// Sometimes users try to `v main.v`, when they have several .v files in their project.
-				// Then, they encounter puzzling errors about missing or unknown types. In this case,
-				// the intended command may have been `v .` instead, so just suggest that:
-				old_cmd := util.bold('v ${b.pref.path}')
-				new_cmd := util.bold('v ${os.dir(b.pref.path)}')
-				eprintln(util.color('notice', 'If the code of your project is in multiple files, try with `${new_cmd}` instead of `${old_cmd}`'))
-			}
+	if !b.pref.is_vls && b.checker.nr_errors > 0 && b.pref.path.ends_with('.v')
+		&& os.is_file(b.pref.path) && !b.pref.path.ends_with('vrepl_temp.v') {
+		if b.checker.errors.any(it.message.starts_with('unknown ')) {
+			// Sometimes users try to `v main.v`, when they have several .v files in their project.
+			// Then, they encounter puzzling errors about missing or unknown types. In this case,
+			// the intended command may have been `v .` instead, so just suggest that:
+			old_cmd := util.bold('v ${b.pref.path}')
+			new_cmd := util.bold('v ${os.dir(b.pref.path)}')
+			eprintln(util.color('notice',
+				'If the code of your project is in a folder with multiple .v files, try `${new_cmd}` instead of `${old_cmd}`'))
 		}
 	}
 }
@@ -494,8 +958,8 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 	}
 
 	if b.pref.check_only {
-		for file in b.parsed_files {
-			if !b.pref.skip_warnings {
+		if !b.pref.skip_notes && !b.pref.json_errors {
+			for file in b.parsed_files {
 				for err in file.notices {
 					kind := if b.pref.is_verbose {
 						'${err.reporter} notice #${b.nr_notices}:'
@@ -507,6 +971,7 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 			}
 		}
 
+		mut json_errors := []util.JsonError{}
 		for file in b.parsed_files {
 			for err in file.errors {
 				kind := if b.pref.is_verbose {
@@ -514,12 +979,29 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				} else {
 					'error:'
 				}
-				util.show_compiler_message(kind, err.CompilerMessage)
+
+				if b.pref.json_errors {
+					json_errors << util.JsonError{
+						message: err.message
+						path:    os.to_slash(err.file_path)
+						line_nr: err.pos.line_nr + 1
+						col:     err.pos.col + 1
+					}
+					// util.print_json_error(kind, err.CompilerMessage)
+				} else {
+					util.show_compiler_message(kind, err.CompilerMessage)
+				}
 			}
 		}
-
-		for file in b.parsed_files {
-			if !b.pref.skip_warnings {
+		if b.pref.json_errors {
+			if !b.pref.is_vls
+				|| b.pref.linfo.method !in [.definition, .completion, .signature_help, .hover] {
+				util.print_json_errors(json_errors)
+			}
+			// eprintln(json2.encode_pretty(json_errors))
+		}
+		if !b.pref.skip_warnings {
+			for file in b.parsed_files {
 				for err in file.warnings {
 					kind := if b.pref.is_verbose {
 						'${err.reporter} warning #${b.nr_warnings}:'
@@ -535,7 +1017,6 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 		if b.nr_errors > 0 {
 			exit(1)
 		}
-		exit(0)
 	}
 
 	if b.pref.is_verbose && b.checker.nr_warnings > 1 {
@@ -544,7 +1025,7 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 	if b.pref.is_verbose && b.checker.nr_notices > 1 {
 		println('${b.checker.nr_notices} notices')
 	}
-	if b.checker.nr_notices > 0 && !b.pref.skip_warnings {
+	if b.checker.nr_notices > 0 && !b.pref.skip_notes {
 		for err in b.checker.notices {
 			kind := if b.pref.is_verbose {
 				'${err.reporter} notice #${b.checker.nr_notices}:'
@@ -564,7 +1045,7 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 			util.show_compiler_message(kind, err.CompilerMessage)
 		}
 	}
-	//
+
 	if b.pref.is_verbose && b.checker.nr_errors > 1 {
 		println('${b.checker.nr_errors} errors')
 	}
@@ -590,11 +1071,12 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				for stmt in file.stmts {
 					if stmt is ast.FnDecl {
 						if stmt.name == fn_name {
-							fheader := b.table.stringify_fn_decl(&stmt, 'main', map[string]string{})
+							fheader := b.table.stringify_fn_decl(&stmt, 'main',
+								map[string]string{}, false)
 							redefines << FunctionRedefinition{
-								fpath: file.path
-								fline: stmt.pos.line_nr
-								f: stmt
+								fpath:   file.path
+								fline:   stmt.pos.line_nr
+								f:       stmt
 								fheader: fheader
 							}
 							redefine_conflicts[fheader]++
@@ -608,9 +1090,9 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				)
 				for redefine in redefines {
 					util.show_compiler_message('conflicting declaration:',
-						message: redefine.fheader
+						message:   redefine.fheader
 						file_path: redefine.fpath
-						pos: redefine.f.pos
+						pos:       redefine.f.pos
 					)
 				}
 				total_conflicts++
@@ -631,20 +1113,37 @@ struct FunctionRedefinition {
 }
 
 pub fn (b &Builder) error_with_pos(s string, fpath string, pos token.Pos) errors.Error {
-	if !b.pref.check_only {
-		util.show_compiler_message('builder error:', pos: pos, file_path: fpath, message: s)
-		exit(1)
-	}
-
 	return errors.Error{
 		file_path: fpath
-		pos: pos
-		reporter: .builder
-		message: s
+		pos:       pos
+		reporter:  .builder
+		message:   s
 	}
 }
 
-[noreturn]
+fn (b &Builder) print_frontend_builder_errors() {
+	if b.pref.check_only || b.pref.output_mode != .stdout {
+		return
+	}
+	for file in b.parsed_files {
+		for err in file.errors {
+			if err.reporter == .builder {
+				util.show_compiler_message('builder error:', err.CompilerMessage)
+			}
+		}
+	}
+}
+
+@[noreturn]
 pub fn verror(s string) {
 	util.verror('builder error', s)
+}
+
+pub fn (mut b Builder) show_parsed_files() {
+	for p in b.parsed_files {
+		if p.is_parse_text {
+			println(p.path + ':parse_text')
+		}
+		println(p.path)
+	}
 }

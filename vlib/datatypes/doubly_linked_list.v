@@ -1,5 +1,10 @@
 module datatypes
 
+pub enum Direction {
+	front
+	back
+}
+
 struct DoublyListNode[T] {
 mut:
 	data T
@@ -16,7 +21,8 @@ mut:
 	// of the list while iterating. TODO: use an option
 	// instead of a pointer to determine it is initialized.
 	iter &DoublyListIter[T] = unsafe { 0 }
-	len  int
+pub mut:
+	len int
 }
 
 // is_empty checks if the linked list is empty
@@ -77,6 +83,23 @@ pub fn (mut list DoublyLinkedList[T]) push_front(item T) {
 		list.head = new_node
 	}
 	list.len += 1
+}
+
+// push_many adds array of elements to the beginning of the linked list
+pub fn (mut list DoublyLinkedList[T]) push_many(elements []T, direction Direction) {
+	match direction {
+		.front {
+			for i := elements.len - 1; i >= 0; i-- {
+				v := elements[i]
+				list.push_front(v)
+			}
+		}
+		.back {
+			for v in elements {
+				list.push_back(v)
+			}
+		}
+	}
 }
 
 // pop_back removes the last element of the linked list
@@ -143,7 +166,7 @@ pub fn (mut list DoublyLinkedList[T]) insert(idx int, item T) ! {
 // when idx > list.len/2. This helper function assumes idx bounds have
 // already been checked and idx is not at the edges.
 fn (mut list DoublyLinkedList[T]) insert_back(idx int, item T) {
-	mut node := list.node(idx + 1)
+	mut node := list.node(idx)
 	mut prev := node.prev
 	//   prev       node
 	//  ------     ------
@@ -204,7 +227,7 @@ fn (list &DoublyLinkedList[T]) node(idx int) &DoublyListNode[T] {
 		return node
 	}
 	mut node := list.tail
-	for t := list.len - 1; t >= idx; t -= 1 {
+	for t := list.len - 1; t > idx; t -= 1 {
 		node = node.prev
 	}
 	return node

@@ -34,7 +34,7 @@ fn (mut g Gen) gen_embed_file_init(mut node ast.ComptimeCall) {
 		if node.embed_file.compression_type == 'none' {
 			node.embed_file.bytes = file_bytes
 		} else {
-			cache_dir := os.join_path(os.vmodules_dir(), 'cache', 'embed_file')
+			cache_dir := os.join_path(os.vmodules_dir(), '.cache', 'embed_file')
 			cache_key := rand.ulid()
 			// cache_key := md5.hexhash(node.embed_file.apath)
 			if !os.exists(cache_dir) {
@@ -85,6 +85,9 @@ fn (mut g Gen) gen_embed_file_init(mut node ast.ComptimeCall) {
 // into a single generated function _v_embed_file_metadata, that accepts a hash of the absolute path of the embedded
 // files.
 fn (mut g Gen) gen_embedded_metadata() {
+	if g.pref.parallel_cc {
+		g.extern_out.writeln('extern v__embed_file__EmbedFileData _v_embed_file_metadata(u64 ef_hash);')
+	}
 	g.embedded_data.writeln('v__embed_file__EmbedFileData _v_embed_file_metadata(u64 ef_hash) {')
 	g.embedded_data.writeln('\tv__embed_file__EmbedFileData res;')
 	g.embedded_data.writeln('\tmemset(&res, 0, sizeof(res));')
@@ -125,7 +128,7 @@ fn (mut g Gen) gen_embedded_metadata() {
 		g.embedded_data.writeln('\t\t\tbreak;')
 		g.embedded_data.writeln('\t\t} // case ${ef_idx}')
 	}
-	g.embedded_data.writeln('\t\tdefault: _v_panic(_SLIT("unknown embed file"));')
+	g.embedded_data.writeln('\t\tdefault: builtin___v_panic(_S("unknown embed file"));')
 	g.embedded_data.writeln('\t} // switch')
 	g.embedded_data.writeln('\treturn res;')
 	g.embedded_data.writeln('}')
@@ -139,6 +142,9 @@ fn (mut g Gen) gen_embedded_data() {
 	// maybe we need to write to separate files or have an external tool for large files
 	// like the `rcc` tool in Qt?
 	*/
+	// Declare the index before any generated helper references it, to keep MSVC happy.
+	index_len := g.embedded_files.len + 1
+	g.embedded_data.writeln('static const v__embed_file__EmbedFileIndexEntry _v_embed_file_index[${index_len}];')
 	for i, emfile in g.embedded_files {
 		g.embedded_data.write_string('static const unsigned char _v_embed_blob_${i}[${emfile.bytes.len}] = {\n    ')
 		for j := 0; j < emfile.bytes.len; j++ {
@@ -155,7 +161,7 @@ fn (mut g Gen) gen_embedded_data() {
 		g.embedded_data.writeln('\n};')
 	}
 	g.embedded_data.writeln('')
-	g.embedded_data.writeln('const v__embed_file__EmbedFileIndexEntry _v_embed_file_index[] = {')
+	g.embedded_data.writeln('static const v__embed_file__EmbedFileIndexEntry _v_embed_file_index[${index_len}] = {')
 	for i, emfile in g.embedded_files {
 		g.embedded_data.writeln('\t{${i}, { .str=(byteptr)("${cestring(emfile.rpath)}"), .len=${emfile.rpath.len}, .is_lit=1 }, { .str=(byteptr)("${cestring(emfile.compression_type)}"), .len=${emfile.compression_type.len}, .is_lit=1 }, (byteptr)_v_embed_blob_${i}},')
 	}

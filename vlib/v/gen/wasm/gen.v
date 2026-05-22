@@ -8,12 +8,11 @@ import v.pref
 import v.util
 import v.token
 import v.errors
-import v.eval
 import v.gen.wasm.serialise
 import wasm
 import os
 
-[heap; minify]
+@[heap; minify]
 pub struct Gen {
 	out_name string
 	pref     &pref.Preferences = unsafe { nil } // Preferences shared from V struct
@@ -23,9 +22,8 @@ mut:
 	warnings  []errors.Warning
 	errors    []errors.Error
 	table     &ast.Table = unsafe { nil }
-	eval      eval.Eval
 	enum_vals map[string]Enum
-	//
+
 	mod                    wasm.Module
 	pool                   serialise.Pool
 	func                   wasm.Function
@@ -40,7 +38,7 @@ mut:
 	heap_base              ?wasm.GlobalIndex
 	fn_local_idx_end       int
 	fn_name                string
-	stack_frame            int             // Size of the current stack frame, if needed
+	stack_frame            int // Size of the current stack frame, if needed
 	is_leaf_function       bool = true
 	loop_breakpoint_stack  []LoopBreakpoint
 	stack_top              int // position in linear memory
@@ -62,7 +60,11 @@ pub struct LoopBreakpoint {
 	name       string
 }
 
+@[noreturn]
 pub fn (mut g Gen) v_error(s string, pos token.Pos) {
+	util.show_compiler_message('error:', pos: pos, file_path: g.file_path, message: s)
+	exit(1)
+	/*
 	if g.pref.output_mode == .stdout {
 		util.show_compiler_message('error:', pos: pos, file_path: g.file_path, message: s)
 		exit(1)
@@ -74,6 +76,7 @@ pub fn (mut g Gen) v_error(s string, pos token.Pos) {
 			message: s
 		}
 	}
+	*/
 }
 
 pub fn (mut g Gen) warning(s string, pos token.Pos) {
@@ -82,14 +85,14 @@ pub fn (mut g Gen) warning(s string, pos token.Pos) {
 	} else {
 		g.warnings << errors.Warning{
 			file_path: g.file_path
-			pos: pos
-			reporter: .gen
-			message: s
+			pos:       pos
+			reporter:  .gen
+			message:   s
 		}
 	}
 }
 
-[noreturn]
+@[noreturn]
 pub fn (mut g Gen) w_error(s string) {
 	if g.pref.is_verbose {
 		print_backtrace()
@@ -97,7 +100,7 @@ pub fn (mut g Gen) w_error(s string) {
 	util.verror('wasm error', s)
 }
 
-pub fn (g Gen) unpack_type(typ ast.Type) []ast.Type {
+pub fn (g &Gen) unpack_type(typ ast.Type) []ast.Type {
 	ts := g.table.sym(typ)
 	return match ts.info {
 		ast.MultiReturn {
@@ -109,7 +112,7 @@ pub fn (g Gen) unpack_type(typ ast.Type) []ast.Type {
 	}
 }
 
-pub fn (g Gen) is_param_type(typ ast.Type) bool {
+pub fn (g &Gen) is_param_type(typ ast.Type) bool {
 	return !typ.is_ptr() && !g.is_pure_type(typ)
 }
 
@@ -142,7 +145,7 @@ pub fn (mut g Gen) fn_external_import(node ast.FnDecl) {
 	if node.language == .js && g.pref.os == .wasi {
 		g.v_error('javascript interop functions are not allowed in a `wasi` build', node.pos)
 	}
-	if node.return_type.has_flag(.option) || node.return_type.has_flag(.result) {
+	if node.return_type.has_option_or_result() {
 		g.v_error('interop functions must not return option or result', node.pos)
 	}
 
@@ -171,6 +174,11 @@ pub fn (mut g Gen) fn_external_import(node ast.FnDecl) {
 pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 	if node.language in [.js, .wasm] {
 		g.fn_external_import(node)
+		return
+	}
+
+	if node.attrs.contains('flag_enum_fn') {
+		// TODO: remove, when support for fn results is done
 		return
 	}
 
@@ -219,8 +227,8 @@ pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 					paramdbg << g.dbg_type_name('__rval(${g.ret_rvars.len})', t)
 					paraml << wtyp
 					g.ret_rvars << Var{
-						typ: t
-						idx: g.ret_rvars.len
+						typ:        t
+						idx:        g.ret_rvars.len
 						is_address: true
 					}
 				} else {
@@ -240,7 +248,7 @@ pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 					paramdbg << g.dbg_type_name('__rval(0)', rt)
 					paraml << wtyp
 					g.ret_rvars << Var{
-						typ: rt
+						typ:        rt
 						is_address: true
 					}
 				} else {
@@ -252,6 +260,7 @@ pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 			}
 		}
 	}
+
 	if rt.has_flag(.result) {
 		g.v_error('result types are not implemented', node.return_type_pos)
 		retl << .i32_t // &IError
@@ -261,9 +270,9 @@ pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 		typ := g.get_wasm_type_int_literal(p.typ)
 		ntyp := unpack_literal_int(p.typ)
 		g.local_vars << Var{
-			name: p.name
-			typ: ntyp
-			idx: g.local_vars.len + g.ret_rvars.len
+			name:       p.name
+			typ:        ntyp
+			idx:        g.local_vars.len + g.ret_rvars.len
 			is_address: !g.is_pure_type(p.typ)
 		}
 		paramdbg << g.dbg_type_name(p.name, p.typ)
@@ -276,7 +285,7 @@ pub fn (mut g Gen) fn_decl(node ast.FnDecl) {
 	g.fn_local_idx_end = (g.local_vars.len + g.ret_rvars.len)
 	g.fn_name = name
 
-	mut should_export := g.pref.os == .browser && node.is_pub && node.mod == 'main'
+	mut should_export := g.pref.os in [.browser, .wasi] && node.is_pub && node.mod == 'main'
 
 	g.func = g.mod.new_debug_function(name, wasm.FuncType{paraml, retl, none}, paramdbg)
 	func_start := g.func.patch_pos()
@@ -315,10 +324,10 @@ pub fn (mut g Gen) bare_function_frame(func_start wasm.PatchPos) {
 	// stack pointer is perfectly acceptable.
 	//
 	if g.stack_frame != 0 {
-		prolouge := g.func.patch_pos()
+		prologue := g.func.patch_pos()
 		{
 			g.func.global_get(g.sp())
-			g.func.i32_const(g.stack_frame)
+			g.func.i32_const(i32(g.stack_frame))
 			g.func.sub(.i32_t)
 			if !g.is_leaf_function {
 				g.func.local_tee(g.bp())
@@ -327,10 +336,10 @@ pub fn (mut g Gen) bare_function_frame(func_start wasm.PatchPos) {
 				g.func.local_set(g.bp())
 			}
 		}
-		g.func.patch(func_start, prolouge)
+		g.func.patch(func_start, prologue)
 		if !g.is_leaf_function {
 			g.func.global_get(g.sp())
-			g.func.i32_const(g.stack_frame)
+			g.func.i32_const(i32(g.stack_frame))
 			g.func.add(.i32_t)
 			g.func.global_set(g.sp())
 		}
@@ -351,7 +360,7 @@ pub fn (mut g Gen) bare_function_end() {
 
 pub fn (mut g Gen) literalint(val i64, expected ast.Type) {
 	match g.get_wasm_type(expected) {
-		.i32_t { g.func.i32_const(val) }
+		.i32_t { g.func.i32_const(i32(val)) }
 		.i64_t { g.func.i64_const(val) }
 		.f32_t { g.func.f32_const(f32(val)) }
 		.f64_t { g.func.f64_const(f64(val)) }
@@ -361,7 +370,7 @@ pub fn (mut g Gen) literalint(val i64, expected ast.Type) {
 
 pub fn (mut g Gen) literal(val string, expected ast.Type) {
 	match g.get_wasm_type(expected) {
-		.i32_t { g.func.i32_const(val.int()) }
+		.i32_t { g.func.i32_const(i32(val.int())) }
 		.i64_t { g.func.i64_const(val.i64()) }
 		.f32_t { g.func.f32_const(val.f32()) }
 		.f64_t { g.func.f64_const(val.f64()) }
@@ -396,9 +405,114 @@ pub fn (mut g Gen) expr_with_cast(expr ast.Expr, got_type_raw ast.Type, expected
 pub fn (mut g Gen) handle_ptr_arithmetic(typ ast.Type) {
 	if typ.is_ptr() {
 		size, _ := g.pool.type_size(typ)
-		g.func.i32_const(size)
+		g.func.i32_const(i32(size))
 		g.func.mul(.i32_t)
 	}
+}
+
+fn (mut g Gen) handle_string_operation(op token.Kind) {
+	left_tmp := g.func.new_local_named(.i32_t, '__tmp<string>.left')
+	right_tmp := g.func.new_local_named(.i32_t, '__tmp<string>.right')
+	g.func.local_set(right_tmp)
+	g.func.local_set(left_tmp)
+
+	match op {
+		.plus {
+			ret_var := g.new_local('', ast.string_type)
+			g.ref(ret_var)
+			g.func.local_get(left_tmp)
+			g.func.local_get(right_tmp)
+			g.func.call('string.+')
+			g.get(ret_var)
+		}
+		.eq {
+			g.func.local_get(left_tmp)
+			g.func.local_get(right_tmp)
+			g.func.call('string.==')
+		}
+		.ne {
+			g.func.local_get(left_tmp)
+			g.func.local_get(right_tmp)
+			g.func.call('string.==')
+			g.func.eqz(.i32_t)
+		}
+		.lt {
+			g.func.local_get(left_tmp)
+			g.func.local_get(right_tmp)
+			g.func.call('string.<')
+		}
+		.gt {
+			g.func.local_get(right_tmp)
+			g.func.local_get(left_tmp)
+			g.func.call('string.<')
+		}
+		.le {
+			g.func.local_get(right_tmp)
+			g.func.local_get(left_tmp)
+			g.func.call('string.<')
+			g.func.eqz(.i32_t)
+		}
+		.ge {
+			g.func.local_get(left_tmp)
+			g.func.local_get(right_tmp)
+			g.func.call('string.<')
+			g.func.eqz(.i32_t)
+		}
+		else {
+			g.w_error('unsupported string operation: `${op}`')
+		}
+	}
+}
+
+pub fn (mut g Gen) string_inter_literal_expr(node ast.StringInterLiteral, expected ast.Type) {
+	if node.exprs.len == 0 {
+		g.expr(ast.StringLiteral{ val: node.vals[0], pos: node.pos }, expected)
+		return
+	}
+
+	result_var := g.new_local('__str_inter', ast.string_type)
+
+	g.set_with_expr(ast.StringLiteral{ val: node.vals[0], pos: node.pos }, result_var)
+
+	for i, expr in node.exprs {
+		mut expr_to_concat := expr
+		typ := node.expr_types[i]
+
+		if typ != ast.string_type {
+			has_str, _, _ := g.table.sym(typ).str_method_info()
+			if !has_str {
+				g.v_error('cannot interpolate type without .str() method', node.fmt_poss[i])
+			}
+
+			expr_to_concat = ast.CallExpr{
+				name:           'str'
+				left:           expr
+				left_type:      typ
+				receiver_type:  typ
+				return_type:    ast.string_type
+				is_method:      true
+				is_return_used: true
+			}
+		}
+
+		// result = result + expr_as_string
+		{
+			g.get(result_var)
+			g.expr(expr_to_concat, ast.string_type)
+			g.handle_string_operation(.plus)
+			g.set(result_var)
+		}
+
+		// Concat the next string segment (if not empty)
+		if i + 1 < node.vals.len && node.vals[i + 1].len > 0 {
+			g.get(result_var)
+			g.expr(ast.StringLiteral{ val: node.vals[i + 1], pos: node.pos }, ast.string_type)
+			g.handle_string_operation(.plus)
+			g.set(result_var)
+		}
+	}
+
+	g.get(result_var)
 }
 
 pub fn (mut g Gen) infix_expr(node ast.InfixExpr, expected ast.Type) {
@@ -436,56 +550,9 @@ pub fn (mut g Gen) infix_expr(node ast.InfixExpr, expected ast.Type) {
 	}
 	g.infix_from_typ(node.left_type, node.op)
 
-	res_typ := if node.op in [.eq, .ne, .gt, .lt, .ge, .le] {
-		ast.bool_type
-	} else {
-		node.left_type
-	}
-	g.func.cast(g.as_numtype(g.get_wasm_type(res_typ)), res_typ.is_signed(), g.as_numtype(g.get_wasm_type(expected)))
-}
-
-pub fn (mut g Gen) wasm_builtin(name string, node ast.CallExpr) {
-	for idx, arg in node.args {
-		g.expr(arg.expr, node.expected_arg_types[idx])
-	}
-
-	match name {
-		'__memory_grow' {
-			g.func.memory_grow()
-		}
-		'__memory_fill' {
-			g.func.memory_fill()
-		}
-		'__memory_copy' {
-			g.func.memory_copy()
-		}
-		'__memory_size' {
-			g.func.memory_size()
-		}
-		'__heap_base' {
-			if hp := g.heap_base {
-				g.func.global_get(hp)
-			}
-			hp := g.mod.new_global('__heap_base', false, .i32_t, false, wasm.constexpr_value(0))
-			g.func.global_get(hp)
-			g.heap_base = hp
-		}
-		'__reinterpret_f32_u32' {
-			g.func.reinterpret(.f32_t)
-		}
-		'__reinterpret_u32_f32' {
-			g.func.reinterpret(.i32_t)
-		}
-		'__reinterpret_f64_u64' {
-			g.func.reinterpret(.f64_t)
-		}
-		'__reinterpret_u64_f64' {
-			g.func.reinterpret(.i64_t)
-		}
-		else {
-			panic('unreachable')
-		}
-	}
+	res_typ := if node.op in [.eq, .ne, .gt, .lt, .ge, .le] { ast.bool_type } else { node.left_type }
+	g.func.cast(g.as_numtype(g.get_wasm_type(res_typ)), res_typ.is_signed(),
+		g.as_numtype(g.get_wasm_type(expected)))
 }
 
 pub fn (mut g Gen) prefix_expr(node ast.PrefixExpr, expected ast.Type) {
@@ -550,7 +617,8 @@ pub fn (mut g Gen) prefix_expr(node ast.PrefixExpr, expected ast.Type) {
 	}
 }
 
-pub fn (mut g Gen) if_branch(ifexpr ast.IfExpr, expected ast.Type, unpacked_params []wasm.ValType, idx int, existing_rvars []Var) {
+pub fn (mut g Gen) if_branch(ifexpr ast.IfExpr, expected ast.Type, unpacked_params []wasm.ValType, idx int,
+	existing_rvars []Var) {
 	curr := ifexpr.branches[idx]
 
 	g.expr(curr.cond, ast.bool_type)
@@ -571,6 +639,11 @@ pub fn (mut g Gen) if_branch(ifexpr ast.IfExpr, expected ast.Type, unpacked_para
 }
 
 pub fn (mut g Gen) if_expr(ifexpr ast.IfExpr, expected ast.Type, existing_rvars []Var) {
+	if ifexpr.is_comptime {
+		g.comptime_if_expr(ifexpr, expected, existing_rvars)
+		return
+	}
+
 	params := if expected == ast.void_type {
 		[]wasm.ValType{}
 	} else if existing_rvars.len == 0 {
@@ -581,25 +654,109 @@ pub fn (mut g Gen) if_expr(ifexpr ast.IfExpr, expected ast.Type, existing_rvars 
 	g.if_branch(ifexpr, expected, params, 0, existing_rvars)
 }
 
+pub fn (mut g Gen) match_expr(node ast.MatchExpr, expected ast.Type, existing_rvars []Var) {
+	results := if expected == ast.void_type {
+		[]wasm.ValType{}
+	} else if existing_rvars.len == 0 {
+		g.unpack_type(expected).map(g.get_wasm_type(it))
+	} else {
+		g.unpack_type(expected).filter(!g.is_param_type(it)).map(g.get_wasm_type(it))
+	}
+	g.match_branch(node, expected, results, 0, existing_rvars)
+}
+
+fn (mut g Gen) match_branch(node ast.MatchExpr, expected ast.Type, unpacked_params []wasm.ValType, branch_idx int, existing_rvars []Var) {
+	if branch_idx >= node.branches.len {
+		return
+	}
+
+	branch := node.branches[branch_idx]
+	mut is_last_branch := branch_idx + 1 >= node.branches.len
+	mut has_else := branch.is_else
+
+	if has_else {
+		if branch.stmts.len > 0 {
+			g.rvar_expr_stmts(branch.stmts, expected, existing_rvars)
+		}
+		return
+	}
+
+	if branch.exprs.len > 0 {
+		g.match_branch_exprs(node, expected, unpacked_params, branch_idx, 0, existing_rvars, branch)
+	} else {
+		if branch.stmts.len > 0 {
+			g.rvar_expr_stmts(branch.stmts, expected, existing_rvars)
+		}
+		if !is_last_branch {
+			g.match_branch(node, expected, unpacked_params, branch_idx + 1, existing_rvars)
+		}
+	}
+}
+
+fn (mut g Gen) match_branch_exprs(node ast.MatchExpr, expected ast.Type, unpacked_params []wasm.ValType, branch_idx int, expr_idx int, existing_rvars []Var, branch ast.MatchBranch) {
+	if expr_idx >= branch.exprs.len {
+		return
+	}
+
+	mut is_last_branch := branch_idx + 1 >= node.branches.len
+	mut is_last_expr := expr_idx + 1 >= branch.exprs.len
+
+	expr := branch.exprs[expr_idx]
+
+	if expr is ast.RangeExpr {
+		wasm_type := g.as_numtype(g.get_wasm_type(node.cond_type))
+		is_signed := node.cond_type.is_signed()
+
+		g.expr(node.cond, node.cond_type)
+		g.expr(expr.high, node.cond_type)
+		g.func.le(wasm_type, is_signed)
+	} else {
+		if g.is_param_type(node.cond_type) {
+			// Param types -> strings etc
+			g.expr(node.cond, node.cond_type)
+			g.expr(expr, node.cond_type)
+			g.infix_from_typ(node.cond_type, .eq)
+		} else {
+			// Numeric types -> direct comparison
+			wasm_type := g.as_numtype(g.get_wasm_type(node.cond_type))
+			g.expr(node.cond, node.cond_type)
+			g.expr(expr, node.cond_type)
+			g.func.eq(wasm_type)
+		}
+	}
+
+	blk := g.func.c_if([], unpacked_params)
+	{
+		if branch.stmts.len > 0 {
+			g.rvar_expr_stmts(branch.stmts, expected, existing_rvars)
+		}
+	}
+	{
+		g.func.c_else(blk)
+		if is_last_expr {
+			if !is_last_branch {
+				g.match_branch(node, expected, unpacked_params, branch_idx + 1, existing_rvars)
+			}
+		} else {
+			g.match_branch_exprs(node, expected, unpacked_params, branch_idx, expr_idx + 1,
+				existing_rvars, branch)
+		}
+	}
+	g.func.c_end(blk)
+}
+
 pub fn (mut g Gen) call_expr(node ast.CallExpr, expected ast.Type, existing_rvars []Var) {
 	mut wasm_ns := ?string(none)
 	mut name := node.name
 
 	is_print := name in ['panic', 'println', 'print', 'eprintln', 'eprint']
 
-	if name in ['__memory_grow', '__memory_fill', '__memory_copy', '__memory_size', '__heap_base',
-		'__reinterpret_f32_u32', '__reinterpret_u32_f32', '__reinterpret_f64_u64',
-		'__reinterpret_u64_f64'] {
-		g.wasm_builtin(node.name, node)
-		return
-	}
-
 	if node.is_method {
 		name = '${g.table.get_type_name(node.receiver_type)}.${node.name}'
 	}
 
 	if node.language in [.js, .wasm] {
-		cfn_attrs := g.table.fns[node.name].attrs
+		cfn_attrs := unsafe { g.table.fns[node.name].attrs }
 
 		short_name := if node.language == .js {
 			node.name.all_after_last('JS.')
@@ -636,14 +793,10 @@ pub fn (mut g Gen) call_expr(node ast.CallExpr, expected ast.Type, existing_rvar
 	// {method self}
 	//
 	if node.is_method {
-		expr := if !node.left_type.is_ptr() && node.receiver_type.is_ptr() {
-			ast.Expr(ast.PrefixExpr{
-				op: .amp
+		expr := if !node.left_type.is_ptr() && node.receiver_type.is_ptr() { ast.Expr(ast.PrefixExpr{
+				op:    .amp
 				right: node.left
-			})
-		} else {
-			node.left
-		}
+			}) } else { node.left }
 		// hack alert!
 		if node.receiver_type == ast.int_literal_type && expr is ast.IntegerLiteral {
 			g.literal(expr.val, ast.i64_type)
@@ -666,12 +819,13 @@ pub fn (mut g Gen) call_expr(node ast.CallExpr, expected ast.Type, existing_rvar
 			}
 
 			expr = ast.CallExpr{
-				name: 'str'
-				left: expr
-				left_type: typ
-				receiver_type: typ
-				return_type: ast.string_type
-				is_method: true
+				name:           'str'
+				left:           expr
+				left_type:      typ
+				receiver_type:  typ
+				return_type:    ast.string_type
+				is_method:      true
+				is_return_used: true
 			}
 		}
 
@@ -734,7 +888,7 @@ pub fn (mut g Gen) get_field_offset(typ ast.Type, name string) int {
 pub fn (mut g Gen) field_offset(typ ast.Type, name string) {
 	offset := g.get_field_offset(typ, name)
 	if offset != 0 {
-		g.func.i32_const(offset)
+		g.func.i32_const(i32(offset))
 		g.func.add(.i32_t)
 	}
 }
@@ -803,7 +957,10 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 
 			size, _ := g.pool.type_size(typ)
 
+			old_needs_address := g.needs_address
+			g.needs_address = false
 			g.expr(node.index, ast.int_type)
+			g.needs_address = old_needs_address
 
 			if !direct_array_access {
 				g.is_leaf_function = false // calls panic()
@@ -816,7 +973,7 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 					g.func.local_get(tmp_voidptr_var)
 					g.load_field(ast.string_type, ast.int_type, 'len')
 				} else if ts.info is ast.ArrayFixed {
-					g.func.i32_const(ts.info.size)
+					g.func.i32_const(i32(ts.info.size))
 				} else {
 					panic('unreachable')
 				}
@@ -884,7 +1041,7 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 			g.cast(node.typ, expected)
 		}
 		ast.MatchExpr {
-			g.w_error('wasm backend does not support match expressions yet')
+			g.match_expr(node, expected, [])
 		}
 		ast.EnumVal {
 			type_name := g.table.get_type_name(node.typ)
@@ -892,8 +1049,8 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 			g.literalint(g.enum_vals[type_name].fields[node.val], ts_type)
 		}
 		ast.OffsetOf {
-			styp := g.table.sym(node.struct_type)
-			if styp.kind != .struct_ {
+			sym := g.table.sym(node.struct_type)
+			if sym.kind != .struct {
 				g.v_error('__offsetof expects a struct Type as first argument', node.pos)
 			}
 			off := g.get_field_offset(node.struct_type, node.field)
@@ -923,6 +1080,9 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 			g.set_with_expr(node, v)
 			g.get(v)
 		}
+		ast.StringInterLiteral {
+			g.string_inter_literal_expr(node, expected)
+		}
 		ast.InfixExpr {
 			g.infix_expr(node, expected)
 		}
@@ -944,7 +1104,7 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 		}
 		ast.CharLiteral {
 			rns := serialise.eval_escape_codes_raw(node.val) or { panic('unreachable') }.runes()[0]
-			g.func.i32_const(rns)
+			g.func.i32_const(i32(rns))
 		}
 		ast.Ident {
 			v := g.get_var_from_ident(node)
@@ -957,6 +1117,7 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 		ast.Nil {
 			g.func.i32_const(0)
 		}
+		ast.EmptyExpr {}
 		ast.IfExpr {
 			g.if_expr(node, expected, [])
 		}
@@ -978,7 +1139,8 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 				}
 			}
 
-			g.func.cast(g.as_numtype(g.get_wasm_type(typ)), typ.is_signed(), g.as_numtype(g.get_wasm_type(node.typ)))
+			g.func.cast(g.as_numtype(g.get_wasm_type(typ)), typ.is_signed(),
+				g.as_numtype(g.get_wasm_type(node.typ)))
 		}
 		ast.CallExpr {
 			g.call_expr(node, expected, [])
@@ -989,8 +1151,205 @@ pub fn (mut g Gen) expr(node ast.Expr, expected ast.Type) {
 	}
 }
 
+pub fn (mut g Gen) for_in_stmt(node ast.ForInStmt) {
+	if node.is_range {
+		g.for_in_range(node)
+		return
+	}
+
+	cond_sym := g.table.sym(node.cond_type)
+
+	match cond_sym.kind {
+		.array_fixed {
+			g.for_in_array_fixed(node, cond_sym)
+		}
+		.string {
+			g.for_in_string(node)
+		}
+		else {
+			g.w_error('unsupported iter type: ${cond_sym.kind}')
+		}
+	}
+}
+
+fn (mut g Gen) for_in_range(node ast.ForInStmt) {
+	loop_var_type := unpack_literal_int(node.val_type)
+	block := g.func.c_block([], [])
+	{
+		mut loop_var := Var{}
+		loop_var = g.new_local(node.val_var, loop_var_type)
+
+		g.expr(node.cond, loop_var_type)
+		g.set(loop_var)
+
+		loop := g.func.c_loop([], [])
+		{
+			g.loop_breakpoint_stack << LoopBreakpoint{
+				c_continue: loop
+				c_break:    block
+				name:       node.label
+			}
+
+			g.get(loop_var)
+			g.expr(node.high, loop_var_type)
+			wtyp := g.as_numtype(g.get_wasm_type(loop_var_type))
+			g.func.lt(wtyp, loop_var_type.is_signed())
+			g.func.eqz(.i32_t)
+			g.func.c_br_if(block)
+
+			g.expr_stmts(node.stmts, ast.void_type)
+
+			g.set_prepare(loop_var)
+			{
+				g.get(loop_var)
+				g.literalint(1, loop_var_type)
+				g.func.add(wtyp)
+			}
+			g.set(loop_var)
+
+			g.func.c_br(loop)
+			g.loop_breakpoint_stack.pop()
+		}
+		g.func.c_end(loop)
+	}
+	g.func.c_end(block)
+}
+
+fn (mut g Gen) for_in_array_fixed(node ast.ForInStmt, cond_sym &ast.TypeSymbol) {
+	info := cond_sym.info as ast.ArrayFixed
+	array_size := info.size
+
+	block := g.func.c_block([], [])
+	{
+		idx_var := g.new_local('__idx', ast.int_type)
+		g.literalint(0, ast.int_type)
+		g.set(idx_var)
+
+		array_base := g.new_local('__array_base', node.cond_type)
+		g.expr(node.cond, node.cond_type)
+		g.set(array_base)
+
+		loop := g.func.c_loop([], [])
+		{
+			g.loop_breakpoint_stack << LoopBreakpoint{
+				c_continue: loop
+				c_break:    block
+				name:       node.label
+			}
+
+			// if index >= array_size
+			g.get(idx_var)
+			g.literalint(array_size, ast.int_type)
+			g.func.ge(.i32_t, false)
+			g.func.c_br_if(block)
+
+			// _ -> No variable in the loop
+			if node.val_var != '_' {
+				element_var := g.new_local(node.val_var, node.val_type)
+
+				// array_base + idx * element_size
+				g.get(array_base)
+				g.get(idx_var)
+
+				elem_size, _ := g.pool.type_size(node.val_type)
+				if elem_size > 1 {
+					g.literalint(elem_size, ast.int_type)
+					g.func.mul(.i32_t)
+				}
+				g.func.add(.i32_t)
+
+				if g.is_pure_type(node.val_type) {
+					g.load(node.val_type, 0)
+				}
+
+				g.set(element_var)
+			}
+
+			// Inside loop
+			g.expr_stmts(node.stmts, ast.void_type)
+
+			// idx++
+			g.set_prepare(idx_var)
+			{
+				g.get(idx_var)
+				g.literalint(1, ast.int_type)
+				g.func.add(.i32_t)
+			}
+			g.set(idx_var)
+
+			g.func.c_br(loop)
+			g.loop_breakpoint_stack.pop()
+		}
+		g.func.c_end(loop)
+	}
+	g.func.c_end(block)
+}
+
+fn (mut g Gen) for_in_string(node ast.ForInStmt) {
+	block := g.func.c_block([], [])
+	{
+		idx_var := g.new_local('__idx', ast.int_type)
+		g.literalint(0, ast.int_type)
+		g.set(idx_var)
+
+		// String ptr
+		string_var := g.new_local('__string', ast.string_type)
+		g.expr(node.cond, ast.string_type)
+		g.set(string_var)
+
+		len_var := g.new_local('__len', ast.int_type)
+		g.get(string_var)
+		g.load_field(ast.string_type, ast.int_type, 'len')
+		g.set(len_var)
+
+		loop := g.func.c_loop([], [])
+		{
+			g.loop_breakpoint_stack << LoopBreakpoint{
+				c_continue: loop
+				c_break:    block
+				name:       node.label
+			}
+
+			// if index >= length
+			g.get(idx_var)
+			g.get(len_var)
+			g.func.ge(.i32_t, false)
+			g.func.c_br_if(block)
+
+			// _ -> No variable in the loop
+			if node.val_var != '_' {
+				char_var := g.new_local(node.val_var, node.val_type)
+
+				// Use string.at(idx) method to get the byte, don't reinvent the wheel
+				g.get(string_var)
+				g.get(idx_var)
+				g.func.call('string.at')
+
+				g.set(char_var)
+			}
+
+			// Inside loop
+			g.expr_stmts(node.stmts, ast.void_type)
+
+			// idx++
+			g.set_prepare(idx_var)
+			{
+				g.get(idx_var)
+				g.literalint(1, ast.int_type)
+				g.func.add(.i32_t)
+			}
+			g.set(idx_var)
+
+			g.func.c_br(loop)
+			g.loop_breakpoint_stack.pop()
+		}
+		g.func.c_end(loop)
+	}
+	g.func.c_end(block)
+}
+
 pub fn (g &Gen) file_pos(pos token.Pos) string {
-	return '${g.file_path}:${pos.line_nr + 1}:${pos.col + 1}'
+	return '${os.to_slash(g.file_path)}:${pos.line_nr + 1}:${pos.col + 1}'
 }
 
 pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
@@ -1016,8 +1375,8 @@ pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
 				{
 					g.loop_breakpoint_stack << LoopBreakpoint{
 						c_continue: loop
-						c_break: block
-						name: node.label
+						c_break:    block
+						name:       node.label
 					}
 
 					if !node.is_inf {
@@ -1043,30 +1402,38 @@ pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
 
 				loop := g.func.c_loop([], [])
 				{
-					g.loop_breakpoint_stack << LoopBreakpoint{
-						c_continue: loop
-						c_break: block
-						name: node.label
-					}
+					continue_block := g.func.c_block([], [])
+					{
+						g.loop_breakpoint_stack << LoopBreakpoint{
+							c_continue: continue_block
+							c_break:    block
+							name:       node.label
+						}
 
-					if node.has_cond {
-						g.expr(node.cond, ast.bool_type)
-						g.func.eqz(.i32_t)
-						g.func.c_br_if(block) // !cond, goto end
-					}
+						if node.has_cond {
+							g.expr(node.cond, ast.bool_type)
+							g.func.eqz(.i32_t)
+							g.func.c_br_if(block) // !cond, goto end
+						}
 
-					g.expr_stmts(node.stmts, ast.void_type)
+						g.expr_stmts(node.stmts, ast.void_type)
+
+						g.loop_breakpoint_stack.pop()
+					}
+					g.func.c_end(continue_block)
 
 					if node.has_inc {
 						g.expr_stmt(node.inc, ast.void_type)
 					}
 
 					g.func.c_br(loop)
-					g.loop_breakpoint_stack.pop()
 				}
 				g.func.c_end(loop)
 			}
 			g.func.c_end(block)
+		}
+		ast.ForInStmt {
+			g.for_in_stmt(node)
 		}
 		ast.BranchStmt {
 			mut bp := g.loop_breakpoint_stack.last()
@@ -1148,9 +1515,13 @@ pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
 						}
 					}
 
-					if !passed && node.op == .assign {
-						if v := g.get_var_from_expr(left) {
-							var = v
+					if !passed {
+						if node.op == .assign {
+							if v := g.get_var_from_expr(left) {
+								var = v
+							}
+						} else if node.op == .plus_assign && g.is_param_type(rt) {
+							var = g.new_local('', rt)
 						}
 					}
 
@@ -1164,7 +1535,8 @@ pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
 					right := node.right[0]
 					match right {
 						ast.IfExpr {
-							params := node.left_types.filter(!g.is_param_type(it)).map(g.get_wasm_type(it))
+							params :=
+								node.left_types.filter(!g.is_param_type(it)).map(g.get_wasm_type(it))
 							g.if_branch(right, right.typ, params, 0, rvars)
 							set = true
 						}
@@ -1247,6 +1619,13 @@ pub fn (mut g Gen) expr_stmt(node ast.Stmt, expected ast.Type) {
 				}
 			}
 		}
+		ast.AsmStmt {
+			// assumed expected == void
+			g.asm_stmt(node)
+		}
+		ast.EmptyStmt {
+			// EmptyStmt nodes are emitted by earlier compiler passes for eliminated statements.
+		}
 		else {
 			g.w_error('wasm.expr_stmt(): unhandled node: ' + node.type_name())
 		}
@@ -1300,6 +1679,115 @@ mut:
 	fields map[string]i64
 }
 
+fn (mut g Gen) eval_enum_field_expr(expr ast.Expr) ?i64 {
+	match expr {
+		ast.IntegerLiteral {
+			return expr.val.i64()
+		}
+		ast.CharLiteral {
+			runes := expr.val.runes()
+			if runes.len == 0 {
+				return none
+			}
+			return i64(runes[0])
+		}
+		ast.BoolLiteral {
+			return if expr.val { i64(1) } else { i64(0) }
+		}
+		ast.ParExpr {
+			return g.eval_enum_field_expr(expr.expr)
+		}
+		ast.CastExpr {
+			return g.eval_enum_field_expr(expr.expr)
+		}
+		ast.PrefixExpr {
+			right := g.eval_enum_field_expr(expr.right)?
+			match expr.op {
+				.plus {
+					return right
+				}
+				.minus {
+					return -right
+				}
+				.bit_not {
+					return ~right
+				}
+				else {
+					return none
+				}
+			}
+		}
+		ast.InfixExpr {
+			left := g.eval_enum_field_expr(expr.left)?
+			right := g.eval_enum_field_expr(expr.right)?
+			match expr.op {
+				.plus {
+					return left + right
+				}
+				.minus {
+					return left - right
+				}
+				.mul {
+					return left * right
+				}
+				.div {
+					if right == 0 {
+						return none
+					}
+					return left / right
+				}
+				.mod {
+					if right == 0 {
+						return none
+					}
+					return left % right
+				}
+				.left_shift {
+					return i64(u64(left) << int(right))
+				}
+				.right_shift {
+					return left >> int(right)
+				}
+				.unsigned_right_shift {
+					return i64(u64(left) >> int(right))
+				}
+				.amp {
+					return left & right
+				}
+				.pipe {
+					return left | right
+				}
+				.xor {
+					return left ^ right
+				}
+				else {
+					return none
+				}
+			}
+		}
+		ast.Ident {
+			mut obj := expr.obj
+			if obj !in [ast.ConstField, ast.GlobalField] {
+				obj = expr.scope.find(expr.name) or { return none }
+			}
+			match mut obj {
+				ast.ConstField {
+					return g.eval_enum_field_expr(obj.expr)
+				}
+				ast.GlobalField {
+					return g.eval_enum_field_expr(obj.expr)
+				}
+				else {
+					return none
+				}
+			}
+		}
+		else {
+			return none
+		}
+	}
+}
+
 pub fn (mut g Gen) calculate_enum_fields() {
 	// `enum Enum as u64` is supported
 	for name, decl in g.table.enum_decls {
@@ -1307,7 +1795,9 @@ pub fn (mut g Gen) calculate_enum_fields() {
 		mut value := if decl.is_flag { i64(1) } else { 0 }
 		for field in decl.fields {
 			if field.has_expr {
-				value = g.eval.expr(field.expr, decl.typ).int_val()
+				value = g.eval_enum_field_expr(field.expr) or {
+					g.w_error('wasm: unsupported enum expression for `${name}.${field.name}`')
+				}
 			}
 			enum_vals.fields[field.name] = value
 			if decl.is_flag {
@@ -1320,18 +1810,16 @@ pub fn (mut g Gen) calculate_enum_fields() {
 	}
 }
 
-pub fn gen(files []&ast.File, table &ast.Table, out_name string, w_pref &pref.Preferences) {
+pub fn gen(files []&ast.File, mut table ast.Table, out_name string, w_pref &pref.Preferences) {
 	stack_top := w_pref.wasm_stack_top
 	mut g := &Gen{
-		table: table
-		pref: w_pref
-		files: files
-		eval: eval.new_eval(table, w_pref)
-		pool: serialise.new_pool(table, store_relocs: true, null_terminated: false)
+		table:     table
+		pref:      w_pref
+		files:     files
+		pool:      serialise.new_pool(table, store_relocs: true, null_terminated: false)
 		stack_top: stack_top
 		data_base: calc_align(stack_top + 1, 16)
 	}
-	g.table.pointer_size = 4
 	g.mod.assign_memory('memory', true, 1, none)
 
 	if g.pref.is_debug {
@@ -1383,7 +1871,8 @@ pub fn gen(files []&ast.File, table &ast.Table, out_name string, w_pref &pref.Pr
 			exe := $if windows { 'wasm-opt.exe' } $else { 'wasm-opt' }
 			if rt := os.find_abs_path_of_executable(exe) {
 				// -lmu: low memory unused, very important optimisation
-				res := os.execute('${os.quoted_path(rt)} -all -lmu -c -O4 ${os.quoted_path(out_name)} -o ${os.quoted_path(out_name)}')
+				res :=
+					os.execute('${os.quoted_path(rt)} -all -lmu -c -O4 ${os.quoted_path(out_name)} -o ${os.quoted_path(out_name)}')
 				if res.exit_code != 0 {
 					eprintln(res.output)
 					g.w_error('${rt} failed, this should not happen. Report an issue with the above messages, the webassembly generated, and appropriate code.')

@@ -16,31 +16,32 @@ module ttf
 import encoding.utf8
 import math
 
+// BitMap represents a bitmap image of text rendered with the font supplied via the `tf` field.
 pub struct BitMap {
 pub mut:
 	tf       &TTF_File = unsafe { nil }
 	buf      &u8       = unsafe { nil } // pointer to the memory buffer
 	buf_size int // allocated buf size in bytes
-	width    int = 1 // width of the buffer
-	height   int = 1 // height of the buffer
-	bp       int = 4 // byte per pixel of the buffer
+	width    int = 1           // width of the buffer
+	height   int = 1           // height of the buffer
+	bp       int = 4           // byte per pixel of the buffer
 	bg_color u32 = 0xFFFFFF_00 // background RGBA format
 	color    u32 = 0x000000_FF // RGBA format
-	scale    f32 = 1.0 // internal usage!!
-	scale_x  f32 = 1.0 // X scale of the single glyph
-	scale_y  f32 = 1.0 // Y scale of the single glyph
-	angle    f32 = 0.0 // angle of rotation of the bitmap
+	scale    f32 = 1.0         // internal usage!!
+	scale_x  f32 = 1.0         // X scale of the single glyph
+	scale_y  f32 = 1.0         // Y scale of the single glyph
+	angle    f32 = 0.0         // angle of rotation of the bitmap
 	// spaces
-	space_cw   f32 = 1.0 // width of the space glyph internal usage!!
-	space_mult f32 = f32(0.0) // 1.0/16.0  // space between letter, is a multiplier for a standrd space ax
+	space_cw   f32 = 1.0      // width of the space glyph internal usage!!
+	space_mult f32 = f32(0.0) // 1.0/16.0  // space between letter, is a multiplier for a standard space ax
 	// used only by internal text rendering!!
 	tr_matrix          []f32      = [f32(1), 0, 0, 0, 1, 0, 0, 0, 0] // transformation matrix
 	ch_matrix          []f32      = [f32(1), 0, 0, 0, 1, 0, 0, 0, 0] // character matrix
-	style              Style      = .filled // default syle
-	align              Text_align = .left // default text align
+	style              Style      = .filled // default style
+	align              Text_align = .left   // default text align
 	justify            bool // justify text flag, default deactivated
 	justify_fill_ratio f32 = 0.5 // justify fill ratio, if the ratio of the filled row is >= of this then justify the text
-	filler             [][]int    // filler buffer for the renderer
+	filler             [][]int // filler buffer for the renderer
 	// flag to force font embedded metrics
 	use_font_metrics bool
 }
@@ -50,33 +51,33 @@ pub mut:
 * Utility
 *
 ******************************************************************************/
-// clear clear the bitmap with 0 bytes
+// clear clears the bitmap with 0 bytes.
 pub fn (mut bmp BitMap) clear() {
 	mut sz := bmp.width * bmp.height * bmp.bp
 	unsafe {
-		C.memset(bmp.buf, 0x00, sz)
+		vmemset(bmp.buf, 0x00, sz)
 	}
 }
 
-// transform matrix applied to the text
+// trf_txt returns the transform matrix applied to the text.
 pub fn (bmp &BitMap) trf_txt(p &Point) (int, int) {
 	return int(p.x * bmp.tr_matrix[0] + p.y * bmp.tr_matrix[3] + bmp.tr_matrix[6]), int(
 		p.x * bmp.tr_matrix[1] + p.y * bmp.tr_matrix[4] + bmp.tr_matrix[7])
 }
 
-// transform matrix applied to the char
+// trf_ch returns the transform matrix applied to the char.
 pub fn (bmp &BitMap) trf_ch(p &Point) (int, int) {
 	return int(p.x * bmp.ch_matrix[0] + p.y * bmp.ch_matrix[3] + bmp.ch_matrix[6]), int(
 		p.x * bmp.ch_matrix[1] + p.y * bmp.ch_matrix[4] + bmp.ch_matrix[7])
 }
 
-// set draw postion in the buffer
+// set_pos sets the draw position in the buffer.
 pub fn (mut bmp BitMap) set_pos(x f32, y f32) {
 	bmp.tr_matrix[6] = x
 	bmp.tr_matrix[7] = y
 }
 
-// set the rotation angle in radiants
+// set_rotation sets the rotation angle in radians `a`.
 pub fn (mut bmp BitMap) set_rotation(a f32) {
 	bmp.tr_matrix[0] = f32(math.cos(a)) // 1
 	bmp.tr_matrix[1] = f32(-math.sin(a)) // 0
@@ -89,6 +90,7 @@ pub fn (mut bmp BitMap) set_rotation(a f32) {
 * Filler functions
 *
 ******************************************************************************/
+// init_filler initializes the internal `filler` buffer.
 pub fn (mut bmp BitMap) init_filler() {
 	h := bmp.height - bmp.filler.len
 	if h < 1 {
@@ -100,18 +102,20 @@ pub fn (mut bmp BitMap) init_filler() {
 	// dprintln("Init filler: ${bmp.filler.len} rows")
 }
 
+// clear_filler clears the internal `filler` buffer.
 pub fn (mut bmp BitMap) clear_filler() {
 	for i in 0 .. bmp.height {
 		bmp.filler[i].clear()
 	}
 }
 
+// exec_filler plots the pixels of the `BitMap` to the internal buffer.
 pub fn (mut bmp BitMap) exec_filler() {
 	for y in 0 .. bmp.height {
 		if bmp.filler[y].len > 0 {
 			bmp.filler[y].sort()
 			if bmp.filler[y].len & 1 != 0 {
-				// dprintln("even line!! $y => ${bmp.filler[y]}")
+				// dprintln("even line!! ${y} => ${bmp.filler[y]}")
 				continue
 			}
 			mut index := 0
@@ -131,6 +135,7 @@ pub fn (mut bmp BitMap) exec_filler() {
 	}
 }
 
+// fline populates the internal `filler` buffer with a line segment from `in_x0`,`in_y0` to `in_x1`,`in_y1`.
 pub fn (mut bmp BitMap) fline(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) {
 	mut x0 := f32(in_x0)
 	mut x1 := f32(in_x1)
@@ -187,7 +192,9 @@ pub fn (mut bmp BitMap) fline(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32)
 * Draw functions
 *
 ******************************************************************************/
-[inline]
+
+// plot plots a pixel at `x`,`y` in color `c` in the internal bitmap buffer.
+@[inline]
 pub fn (mut bmp BitMap) plot(x int, y int, c u32) bool {
 	if x < 0 || x >= bmp.width || y < 0 || y >= bmp.height {
 		return false
@@ -212,7 +219,7 @@ pub fn (mut bmp BitMap) plot(x int, y int, c u32) bool {
 * smooth draw functions
 *
 ******************************************************************************/
-// aline draw an aliased line on the bitmap
+// aline draws an aliased line on the bitmap.
 pub fn (mut bmp BitMap) aline(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) {
 	// mut c1 := c
 	mut x0 := f32(in_x0)
@@ -283,19 +290,21 @@ pub fn (mut bmp BitMap) aline(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32)
 		mut y := y0
 		for y <= y1 + 0.5 {
 			x := n * (y - y0) + x0
-			e := f32(1 - math.abs(x - 0.5 - int(x)))
-			bmp.plot(int(x), int(y), color_multiply_alpha(c, f32(e * 0.75)))
+			if !math.is_nan(x) && !math.is_nan(y) {
+				e := f32(1 - math.abs(x - 0.5 - int(x)))
+				bmp.plot(int(x), int(y), color_multiply_alpha(c, f32(e * 0.75)))
 
-			xs1 := x + dist
-			if int(xs1) != int(x) {
-				v1 := math.abs(xs1 - x) / dist * (1 - e)
-				bmp.plot(int(xs1), int(y), color_multiply_alpha(c, f32(v1)))
-			}
+				xs1 := x + dist
+				if int(xs1) != int(x) {
+					v1 := math.abs(xs1 - x) / dist * (1 - e)
+					bmp.plot(int(xs1), int(y), color_multiply_alpha(c, f32(v1)))
+				}
 
-			xs2 := x - dist
-			if int(xs2) != int(x) {
-				v2 := math.abs(x - xs1) / dist * (1 - e)
-				bmp.plot(int(xs2), int(y), color_multiply_alpha(c, f32(v2)))
+				xs2 := x - dist
+				if int(xs2) != int(x) {
+					v2 := math.abs(x - xs1) / dist * (1 - e)
+					bmp.plot(int(xs2), int(y), color_multiply_alpha(c, f32(v2)))
+				}
 			}
 			y += 1.0
 		}
@@ -307,6 +316,7 @@ pub fn (mut bmp BitMap) aline(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32)
 * draw functions
 *
 ******************************************************************************/
+// line plots a line segment to the internal buffer from `in_x0`,`in_y0` to `in_x1`,`in_y1` in the color `c`.
 pub fn (mut bmp BitMap) line(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) {
 	// outline with aliased borders
 	if bmp.style == .outline_aliased {
@@ -330,7 +340,7 @@ pub fn (mut bmp BitMap) line(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) 
 	x1 := int(in_x1)
 	y0 := int(in_y0)
 	y1 := int(in_y1)
-	// dprintln("line[$x0,$y0,$x1,$y1]")
+	// dprintln("line[${x0},${y0},${x1},${y1}]")
 
 	mut x := x0
 	mut y := y0
@@ -340,7 +350,7 @@ pub fn (mut bmp BitMap) line(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) 
 	dy := -math.abs(y1 - y0)
 	sy := if y0 < y1 { 1 } else { -1 }
 
-	// verical line
+	// vertical line
 	if dx == 0 {
 		if y0 < y1 {
 			for yt in y0 .. y1 + 1 {
@@ -371,7 +381,7 @@ pub fn (mut bmp BitMap) line(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) 
 		// bmp.plot(x, y, u32(0xFF00))
 		bmp.plot(x, y, c)
 
-		// dprintln("$x $y [$x0,$y0,$x1,$y1]")
+		// dprintln("${x} ${y} [${x0},${y0},${x1},${y1}]")
 		if x == x1 && y == y1 {
 			break
 		}
@@ -387,6 +397,7 @@ pub fn (mut bmp BitMap) line(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) 
 	}
 }
 
+// box plots a (hollow) box to the internal buffer from top-left `in_x0`, `in_y0` to bottom right `in_x1`, `in_y1` in color `c`.
 pub fn (mut bmp BitMap) box(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) {
 	bmp.line(in_x0, in_y0, in_x1, in_y0, c)
 	bmp.line(in_x1, in_y0, in_x1, in_y1, c)
@@ -394,6 +405,7 @@ pub fn (mut bmp BitMap) box(in_x0 int, in_y0 int, in_x1 int, in_y1 int, c u32) {
 	bmp.line(in_x0, in_y0, in_x0, in_y1, c)
 }
 
+// quadratic plots a quadratic Bezier curve in color `c`.
 pub fn (mut bmp BitMap) quadratic(in_x0 int, in_y0 int, in_x1 int, in_y1 int, in_cx int, in_cy int, c u32) {
 	/*
 	x0 := int(in_x0 * bmp.scale)
@@ -427,7 +439,7 @@ pub fn (mut bmp BitMap) quadratic(in_x0 int, in_y0 int, in_x1 int, in_y1 int, in
 	// division = 0.1   // 10 division
 	// division = 0.25  // 4 division
 
-	// dprintln("div: $division")
+	// dprintln("div: ${division}")
 
 	/*
 	----- Bezier quadratic form -----
@@ -460,6 +472,7 @@ pub fn (mut bmp BitMap) quadratic(in_x0 int, in_y0 int, in_x1 int, in_y1 int, in
 * TTF Query functions
 *
 ******************************************************************************/
+// get_chars_bbox returns all characters found in bounding box of string `in_string`.
 pub fn (mut bmp BitMap) get_chars_bbox(in_string string) []int {
 	mut res := []int{}
 	mut w := 0
@@ -481,9 +494,9 @@ pub fn (mut bmp BitMap) get_chars_bbox(in_string string) []int {
 			continue
 		}
 		// manage unicode chars like latin greek etc
-		c_len := ((0xe5000000 >> ((chr >> 3) & 0x1e)) & 3) + 1
+		c_len := int(((u32(0xe5000000) >> ((chr >> 3) & 0x1e)) & 3) + 1)
 		if c_len > 1 {
-			tmp_char := utf8.get_uchar(in_string, i)
+			tmp_char := utf8.get_rune(in_string, i)
 			// dprintln("tmp_char: ${tmp_char.hex()}")
 			chr = u16(tmp_char)
 		}
@@ -497,10 +510,10 @@ pub fn (mut bmp BitMap) get_chars_bbox(in_string string) []int {
 		}
 
 		ax, ay := bmp.tf.next_kern(c_index)
-		// dprintln("char_index: $c_index ax: $ax ay: $ay")
+		// dprintln("char_index: ${c_index} ax: ${ax} ay: ${ay}")
 
 		// cw, lsb := bmp.tf.get_horizontal_metrics(u16(chr))
-		// dprintln("metrics: [${u16(chr):c}] cw:$cw lsb:$lsb")
+		// dprintln("metrics: [${u16(chr):c}] cw:${cw} lsb:${lsb}")
 
 		//----- Calc Glyph transformations -----
 		mut x0 := w + int(ax * bmp.scale)
@@ -513,8 +526,8 @@ pub fn (mut bmp BitMap) get_chars_bbox(in_string string) []int {
 		bmp.ch_matrix[1] = bmp.tr_matrix[1] * bmp.scale * bmp.scale_x
 		bmp.ch_matrix[3] = bmp.tr_matrix[3] * -bmp.scale * bmp.scale_y
 		bmp.ch_matrix[4] = bmp.tr_matrix[4] * -bmp.scale * bmp.scale_y
-		bmp.ch_matrix[6] = int(x1)
-		bmp.ch_matrix[7] = int(y1)
+		bmp.ch_matrix[6] = f32(x1)
+		bmp.ch_matrix[7] = f32(y1)
 
 		// x_min, x_max, y_min, y_max := bmp.tf.read_glyph_dim(c_index)
 		x_min, x_max, _, _ := bmp.tf.read_glyph_dim(c_index)
@@ -532,6 +545,7 @@ pub fn (mut bmp BitMap) get_chars_bbox(in_string string) []int {
 	return res
 }
 
+// get_bbox returns the bounding box (width and height) of text `in_string`.
 pub fn (mut bmp BitMap) get_bbox(in_string string) (int, int) {
 	mut w := 0
 
@@ -552,9 +566,9 @@ pub fn (mut bmp BitMap) get_bbox(in_string string) (int, int) {
 			continue
 		}
 		// manage unicode chars like latin greek etc
-		c_len := ((0xe5000000 >> ((chr >> 3) & 0x1e)) & 3) + 1
+		c_len := int(((u32(0xe5000000) >> ((chr >> 3) & 0x1e)) & 3) + 1)
 		if c_len > 1 {
-			tmp_char := utf8.get_uchar(in_string, i)
+			tmp_char := utf8.get_rune(in_string, i)
 			// dprintln("tmp_char: ${tmp_char.hex()}")
 			chr = u16(tmp_char)
 		}
@@ -567,10 +581,10 @@ pub fn (mut bmp BitMap) get_bbox(in_string string) (int, int) {
 			continue
 		}
 		ax, ay := bmp.tf.next_kern(c_index)
-		// dprintln("char_index: $c_index ax: $ax ay: $ay")
+		// dprintln("char_index: ${c_index} ax: ${ax} ay: ${ay}")
 
 		// cw, lsb := bmp.tf.get_horizontal_metrics(u16(chr))
-		// dprintln("metrics: [${u16(chr):c}] cw:$cw lsb:$lsb")
+		// dprintln("metrics: [${u16(chr):c}] cw:${cw} lsb:${lsb}")
 
 		//----- Calc Glyph transformations -----
 		mut x0 := w + int(ax * bmp.scale)
@@ -583,8 +597,8 @@ pub fn (mut bmp BitMap) get_bbox(in_string string) (int, int) {
 		bmp.ch_matrix[1] = bmp.tr_matrix[1] * bmp.scale * bmp.scale_x
 		bmp.ch_matrix[3] = bmp.tr_matrix[3] * -bmp.scale * bmp.scale_y
 		bmp.ch_matrix[4] = bmp.tr_matrix[4] * -bmp.scale * bmp.scale_y
-		bmp.ch_matrix[6] = int(x1)
-		bmp.ch_matrix[7] = int(y1)
+		bmp.ch_matrix[6] = f32(x1)
+		bmp.ch_matrix[7] = f32(y1)
 
 		x_min, x_max, _, _ := bmp.tf.read_glyph_dim(c_index)
 		// x_min := 1
@@ -598,7 +612,7 @@ pub fn (mut bmp BitMap) get_bbox(in_string string) (int, int) {
 		i += c_len
 	}
 
-	// dprintln("y_min: $bmp.tf.y_min y_max: $bmp.tf.y_max res: ${int((bmp.tf.y_max - bmp.tf.y_min)*buf.scale)} width: ${int( (cw) * buf.scale)}")
+	// dprintln("y_min: ${bmp.tf.y_min} y_max: ${bmp.tf.y_max} res: ${int((bmp.tf.y_max - bmp.tf.y_min)*buf.scale)} width: ${int( (cw) * buf.scale)}")
 	// buf.box(0,y_base - int((bmp.tf.y_min)*buf.scale), int( (x_max) * buf.scale), y_base-int((bmp.tf.y_max)*buf.scale), u32(0xFF00_0000) )
 	return w, int(math.abs(int(bmp.tf.y_max - bmp.tf.y_min)) * bmp.scale)
 }
@@ -616,8 +630,8 @@ fn (mut bmp BitMap) draw_notdef_glyph(in_x int, in_w int) {
 	bmp.ch_matrix[1] = bmp.tr_matrix[1] * bmp.scale * bmp.scale_x
 	bmp.ch_matrix[3] = bmp.tr_matrix[3] * -bmp.scale * bmp.scale_y
 	bmp.ch_matrix[4] = bmp.tr_matrix[4] * -bmp.scale * bmp.scale_y
-	bmp.ch_matrix[6] = int(x1)
-	bmp.ch_matrix[7] = int(y1)
+	bmp.ch_matrix[6] = f32(x1)
+	bmp.ch_matrix[7] = f32(y1)
 	x, y := bmp.trf_ch(p)
 
 	y_h := math.abs(bmp.tf.y_max - bmp.tf.y_min) * bmp.scale * 0.5
@@ -627,6 +641,8 @@ fn (mut bmp BitMap) draw_notdef_glyph(in_x int, in_w int) {
 	bmp.line(int(x - in_w), int(y), int(x), int(y - y_h), bmp.color)
 }
 
+// draw_text plots the pixels of the text `in_string` to the internal buffer.
+// It returns the text bounding box.
 pub fn (mut bmp BitMap) draw_text(in_string string) (int, int) {
 	mut w := 0
 
@@ -647,9 +663,9 @@ pub fn (mut bmp BitMap) draw_text(in_string string) (int, int) {
 			continue
 		}
 		// manage unicode chars like latin greek etc
-		c_len := ((0xe5000000 >> ((chr >> 3) & 0x1e)) & 3) + 1
+		c_len := int(((u32(0xe5000000) >> ((chr >> 3) & 0x1e)) & 3) + 1)
 		if c_len > 1 {
-			tmp_char := utf8.get_uchar(in_string, i)
+			tmp_char := utf8.get_rune(in_string, i)
 			// dprintln("tmp_char: ${tmp_char.hex()}")
 			chr = u16(tmp_char)
 		}
@@ -664,11 +680,11 @@ pub fn (mut bmp BitMap) draw_text(in_string string) (int, int) {
 		}
 
 		ax, ay := bmp.tf.next_kern(c_index)
-		// dprintln("char_index: $c_index ax: $ax ay: $ay")
+		// dprintln("char_index: ${c_index} ax: ${ax} ay: ${ay}")
 
 		cw, _ := bmp.tf.get_horizontal_metrics(u16(chr))
 		// cw, lsb := bmp.tf.get_horizontal_metrics(u16(chr))
-		// dprintln("metrics: [${u16(chr):c}] cw:$cw lsb:$lsb")
+		// dprintln("metrics: [${u16(chr):c}] cw:${cw} lsb:${lsb}")
 
 		//----- Draw_Glyph transformations -----
 		mut x0 := w + int(ax * bmp.scale)
@@ -681,8 +697,8 @@ pub fn (mut bmp BitMap) draw_text(in_string string) (int, int) {
 		bmp.ch_matrix[1] = bmp.tr_matrix[1] * bmp.scale * bmp.scale_x
 		bmp.ch_matrix[3] = bmp.tr_matrix[3] * -bmp.scale * bmp.scale_y
 		bmp.ch_matrix[4] = bmp.tr_matrix[4] * -bmp.scale * bmp.scale_y
-		bmp.ch_matrix[6] = int(x1)
-		bmp.ch_matrix[7] = int(y1)
+		bmp.ch_matrix[6] = f32(x1)
+		bmp.ch_matrix[7] = f32(y1)
 
 		x_min, x_max := bmp.draw_glyph(c_index)
 		// x_min := 1
@@ -697,11 +713,13 @@ pub fn (mut bmp BitMap) draw_text(in_string string) (int, int) {
 		i += c_len
 	}
 
-	// dprintln("y_min: $bmp.tf.y_min y_max: $bmp.tf.y_max res: ${int((bmp.tf.y_max - bmp.tf.y_min)*buf.scale)} width: ${int( (cw) * buf.scale)}")
+	// dprintln("y_min: ${bmp.tf.y_min} y_max: ${bmp.tf.y_max} res: ${int((bmp.tf.y_max - bmp.tf.y_min)*buf.scale)} width: ${int( (cw) * buf.scale)}")
 	// buf.box(0,y_base - int((bmp.tf.y_min)*buf.scale), int( (x_max) * buf.scale), y_base-int((bmp.tf.y_max)*buf.scale), u32(0xFF00_0000) )
 	return w, int(math.abs(int(bmp.tf.y_max - bmp.tf.y_min)) * bmp.scale)
 }
 
+// draw_glyph plots the pixels of the glyph at `index` to the internal buffer.
+// It returns the `x_max` and `x_min` values.
 pub fn (mut bmp BitMap) draw_glyph(index u16) (int, int) {
 	glyph := bmp.tf.read_glyph(index)
 
@@ -727,7 +745,7 @@ pub fn (mut bmp BitMap) draw_glyph(index u16) (int, int) {
 	mut point := Point{}
 
 	for count, point_raw in glyph.points {
-		// dprintln("count: $count, state: $s pl:$glyph.points.len")
+		// dprintln("count: ${count}, state: ${s} pl:${glyph.points.len}")
 		point.x = point_raw.x
 		point.y = point_raw.y
 
@@ -771,8 +789,8 @@ pub fn (mut bmp BitMap) draw_glyph(index u16) (int, int) {
 
 				// bmp.line(x0, y0, (prev.x + point.x)/2, (prev.y + point.y)/2, color2)
 				// bmp.quadratic(x0, y0, (prev.x + point.x)/2, (prev.y + point.y)/2, prev.x, prev.y, color2)
-				bmp.quadratic(x0, y0, (prev.x + point.x) / 2, (prev.y + point.y) / 2,
-					prev.x, prev.y, color)
+				bmp.quadratic(x0, y0, (prev.x + point.x) / 2, (prev.y + point.y) / 2, prev.x,
+					prev.y, color)
 				x0 = (prev.x + point.x) / 2
 				y0 = (prev.y + point.y) / 2
 			}
@@ -799,8 +817,8 @@ pub fn (mut bmp BitMap) draw_glyph(index u16) (int, int) {
 
 					// bmp.line(x0, y0, start_point.x, start_point.y, u32(0x00FF0000)
 					// u32(0xFF000000))
-					bmp.quadratic(x0, y0, start_point.x, start_point.y, (point.x + start_point.x) / 2,
-						(point.y + start_point.y) / 2, color)
+					bmp.quadratic(x0, y0, start_point.x, start_point.y,
+						(point.x + start_point.x) / 2, (point.y + start_point.y) / 2, color)
 				}
 			} else {
 				// last point not in a curve

@@ -1,4 +1,5 @@
-[_naked]
+// vtest build: !tinyc
+@[_naked]
 fn naked_fn() {
 	asm amd64 {
 		push rbp

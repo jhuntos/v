@@ -40,9 +40,11 @@ fn kind_of_existing_path(path string) PathKind {
 	$if js_node {
 		#is_link.val = $fs.existsSync(path.str) && $fs.lstatSync(path.str).isSymbolicLink()
 		#is_dir.val = $fs.existsSync(path,str) && $fs.lstatSync(path.str).isDirectory()
+	} $else {
+		_ = path
 	}
 	return PathKind{
-		is_dir: is_dir
+		is_dir:  is_dir
 		is_link: is_link
 	}
 }
@@ -109,7 +111,12 @@ pub fn rm(path string) ! {
 	}
 }
 
-pub fn cp(src string, dst string) ! {
+@[params]
+pub struct CopyParams {
+	fail_if_exists bool
+}
+
+pub fn cp(src string, dst string, config CopyParams) ! {
 	$if js_node {
 		err := ''
 		#try {

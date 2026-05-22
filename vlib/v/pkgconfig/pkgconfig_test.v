@@ -57,6 +57,7 @@ fn test_samples() {
 			assert x.cflags == ['-I/usr/include', '-pthread', '-I/usr/include/glib-2.0',
 				'-I/usr/lib/x86_64-linux-gnu/glib-2.0/include']
 			assert x.vars == {
+				'pcfiledir':         samples_dir
 				'prefix':            '/usr'
 				'libdir':            '/usr/lib/x86_64-linux-gnu'
 				'includedir':        '/usr/include'
@@ -76,6 +77,7 @@ fn test_samples() {
 			assert x.cflags == ['-I/usr/include/glib-2.0',
 				'-I/usr/lib/x86_64-linux-gnu/glib-2.0/include', '-I/usr/include']
 			assert x.vars == {
+				'pcfiledir':       samples_dir
 				'prefix':          '/usr'
 				'libdir':          '/usr/lib/x86_64-linux-gnu'
 				'includedir':      '/usr/include'
@@ -87,6 +89,14 @@ fn test_samples() {
 			assert x.requires_private == ['libpcre']
 			assert x.version == '2.64.3'
 			assert x.conflicts == []
+		}
+		if x.name == 'OpenSSL' {
+			assert x.modname == 'openssl-3.3.2'
+			assert x.version == '3.3.2'
+			assert x.description == 'Secure Sockets Layer and cryptography libraries and tools'
+			assert x.vars['prefix'] == '/opt/homebrew/Cellar/openssl@3/3.3.2'
+			assert x.vars['libdir'] == '/opt/homebrew/Cellar/openssl@3/3.3.2/lib'
+			assert x.vars['includedir'] == '/opt/homebrew/Cellar/openssl@3/3.3.2/include'
 		}
 	}
 }

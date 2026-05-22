@@ -3,10 +3,8 @@ import rand.splitmix64
 import rand.musl
 import rand.mt19937
 
-const (
-	rnd_count = 40
-	seeds     = [[u32(42), 0], [u32(256), 0]]
-)
+const rnd_count = 40
+const seeds = [[u32(42), 0], [u32(256), 0]]
 
 fn get_n_random_ints(seed_data []u32, n int) []int {
 	mut values := []int{cap: n}
@@ -73,6 +71,15 @@ fn test_rand_intn() {
 	}
 }
 
+fn test_rand_i32n() {
+	max := i32(2525642)
+	for _ in 0 .. rnd_count {
+		value := rand.i32n(max) or { panic("Couldn't obtain i32") }
+		assert value >= 0
+		assert value < max
+	}
+}
+
 fn test_rand_i64n() {
 	max := i64(3246727724653636)
 	for _ in 0 .. rnd_count {
@@ -92,6 +99,16 @@ fn test_rand_int_in_range() {
 	}
 }
 
+fn test_rand_i32_in_range() {
+	min := i32(-4252)
+	max := i32(23054962)
+	for _ in 0 .. rnd_count {
+		value := rand.i32_in_range(min, max) or { panic("Couldn't obtain i32 in range") }
+		assert value >= min
+		assert value < max
+	}
+}
+
 fn test_rand_i64_in_range() {
 	min := i64(-24095)
 	max := i64(324058)
@@ -104,7 +121,7 @@ fn test_rand_i64_in_range() {
 
 fn test_rand_int31() {
 	max_u31 := int(0x7FFFFFFF)
-	sign_mask := int(0x80000000)
+	sign_mask := int(u32(0x80000000))
 	for _ in 0 .. rnd_count {
 		value := rand.int31()
 		assert value >= 0
@@ -116,7 +133,7 @@ fn test_rand_int31() {
 
 fn test_rand_int63() {
 	max_u63 := i64(0x7FFFFFFFFFFFFFFF)
-	sign_mask := i64(0x8000000000000000)
+	sign_mask := i64(u64(0x8000000000000000))
 	for _ in 0 .. rnd_count {
 		value := rand.int63()
 		assert value >= 0
@@ -217,9 +234,7 @@ fn test_rand_u16() {
 	// dump( all[32768] )
 }
 
-const (
-	string_count = 25
-)
+const string_count = 25
 
 fn test_rand_string_from_set() {
 	sets := [
@@ -240,19 +255,44 @@ fn test_rand_string_from_set() {
 	}
 }
 
+fn test_rand_fill_buffer_from_set() {
+	rand.seed([u32(0), 1])
+	outputs := [
+		[u8(50), 53, 57, 49, 53, 49, 56, 52, 57, 57],
+		[u8(55), 51, 52, 52, 50, 49, 53, 56, 52, 57],
+		[u8(56), 53, 52, 48, 52, 48, 57, 49, 50, 53],
+		[u8(52), 55, 53, 57, 54, 56, 49, 49, 49, 54],
+		[u8(50), 55, 50, 57, 50, 56, 57, 52, 52, 48],
+		[u8(49), 48, 48, 57, 57, 53, 49, 54, 50, 50],
+		[u8(49), 57, 50, 57, 51, 49, 49, 53, 54, 53],
+		[u8(56), 49, 52, 50, 56, 51, 48, 55, 54, 50],
+		[u8(50), 55, 54, 55, 48, 54, 50, 56, 51, 52],
+		[u8(51), 48, 50, 55, 54, 54, 49, 54, 54, 50],
+		[u8(50), 51, 51, 57, 50, 48, 56, 49, 54, 55],
+		[u8(51), 54, 51, 55, 56, 50, 54, 48, 51, 51],
+	]
+	for output in outputs {
+		mut buf := []u8{len: 10}
+		rand.fill_buffer_from_set('0123456789', mut buf)
+		assert buf == output
+	}
+}
+
 fn test_rand_string() {
 	rand.seed([u32(0), 1])
 	outputs := [
-		'rzJfVBJgvAyCNpEdXIteDQezg',
-		'AJOeswgoelDOCfcrSUWzVPjeL',
-		'NQfKauQqsXYXSUMFPGnXXPJIn',
-		'vfBGUKbpLoBMQVYXfkvRplWih',
-		'aYHLjMJqvUJmJJHGxEnrEmQGl',
-		'rBJXkQZcembAteaRFoxXmECJo',
-		'HYVLfHmDOCTlSbiSzHrsAIaBH',
-		'zgOiwyISjLSdLGhLzJsSKHVBi',
-		'UiAtobWXGcHsEtgzuNatxfkoI',
-		'NisnYlffJgFEcIdcgzWcGjnHy',
+		'KNffDjUSbjLVyqkNLuklqtsEq',
+		'yHxahszRjWILjfqmLoTsIPCaS',
+		'JuuHjDLeuEjPMxhRzRUdOnegw',
+		'NOJeMKbelMQAgBijGqLgGXgcy',
+		'IRnHmuMXuddWLBsyeejpORynj',
+		'SNyWxnrFYoWyOSLnIxTzkxdlq',
+		'WzzZoOlnqzGKnUASSnlVqMtEg',
+		'CveNYBaLaEwguzgwLxilypSDD',
+		'XTBFsDOTHmTXcXjdmOqSAuAXz',
+		'MFoKXRXLQSeebMegDyUJyaHfu',
+		'EzaZjBJJWdGrASWqEPRRNQmgy',
+		'gZvLtGiyCYQSKxWBMEqVvTytn',
 	]
 	for output in outputs {
 		assert rand.string(25) == output
@@ -262,16 +302,20 @@ fn test_rand_string() {
 fn test_rand_hex() {
 	rand.seed([u32(0), 1])
 	outputs := [
-		'fc30e495deee09e008e15ffc3',
-		'4320efa837788397fb59b28f4',
-		'4995210abf33b6765c240ce62',
-		'f3d20dbe0a8aa6b9c88cd1f6f',
-		'8d7d58b256ab00213dd519cf7',
-		'fa2251284bc20a21eff48127c',
-		'5fef90cdc0c37143117599092',
-		'2a6170531c76dfb50c54126bc',
-		'a686dfd536042d1c1a9afdaf4',
-		'7f12013f6e1177e2d63726de3',
+		'035d15ec991bc42f502bcba28',
+		'49383ad7d8a51d44929ae9c04',
+		'30cdddd88e1963fb9367858e6',
+		'34f86c983ae6a38904dac56e8',
+		'6b1d08e94fb053688c1f47491',
+		'0700b91fea4808116b5deb7bc',
+		'c1dbac7941cc16ec81b70ef2a',
+		'c1cba301066e81a2df43cf051',
+		'51b7adc9dcd9695f004c686d1',
+		'a764df15e0009e02d02f88598',
+		'2d8393b743092c806537724a0',
+		'6b59704086e84f4b62cb11cb1',
+		'aebc14a5d7c2d447e6282f7ff',
+		'9ca8885813e42cb4380efeb84',
 	]
 	for output in outputs {
 		assert rand.hex(25) == output
@@ -281,16 +325,15 @@ fn test_rand_hex() {
 fn test_rand_ascii() {
 	rand.seed([u32(0), 1])
 	outputs := [
-		"2Z:&PeD'V;9=mn\$C>yKg'DIr%",
-		'Ub7ix,}>I=&#2QJki{%FHKv&K',
-		'1WStRylMO|p.R~qqRtr&AOEsd',
-		'yka<GPZ&m+r0^Zi!ShB*1dU~W',
-		'uDA?.zU2X,<DkKT#_-halW\\ki',
-		'fsx!@uRc?re/fSPXj`Y&\\BU}p',
-		'fI_qM"):2;CUno!<dX:Yv*FX$',
-		'FnA(Fr|D`WZVWEzp<k)O;auub',
-		"QRkxH!kjXh&/j{)uSe&{D'v?|",
-		"_CyaU\$z':#}At*v2|xDu6w=;1",
+		r'Yj6x`haolJh8UwGP.gq,Uj+\I',
+		r'5F@!@WF@tAulVN5-FqF;u"Y-9',
+		r'vo1xB>.MIu2lGj~f&$a4wNYeC',
+		r',M0o#M*QHa\myH{Bkkp#s&7/I',
+		r'abRN)Iq`)@b_*jKU_1x$Iv-ZF',
+		r'-@wQzJR0y+%{As"pqz.:Sz,L%',
+		r'1px~?MLh16UAVWO51>X~%3n7S',
+		r'Ed!vev=B-?OS)"W}N8gH5zU.R',
+		r'FR~8;&wB`!NFCRR,_IsIG{y|l',
 	]
 	for output in outputs {
 		assert rand.ascii(25) == output
@@ -298,12 +341,29 @@ fn test_rand_ascii() {
 }
 
 fn ensure_same_output(mut rng rand.PRNG) {
+	trng := rng.type_name()
+	println('> ensure a ${trng} instance works as a global generator, and produces the same output as a local one...')
 	for _ in 0 .. 100 {
+		assert rand.i8() == rng.i8()
+		assert rand.i16() == rng.i16()
 		assert rand.int() == rng.int()
 		assert rand.intn(45) or { 0 } == rng.intn(45) or { 0 }
+		assert rand.i32() == rng.i32()
+		assert rand.i32n(45) or { 0 } == rng.i32n(45) or { 0 }
+		assert rand.i64() == rng.i64()
+		assert rand.i64n(45) or { 0 } == rng.i64n(45) or { 0 }
+		//
+		assert rand.u8() == rng.u8()
+		assert rand.u16() == rng.u16()
+		assert rand.u32() == rng.u32()
+		assert rand.u32n(45) or { 0 } == rng.u32n(45) or { 0 }
 		assert rand.u64() == rng.u64()
+		assert rand.u64n(45) or { 0 } == rng.u64n(45) or { 0 }
+		//
+		assert rand.f32() == rng.f32()
+		assert rand.f32n(45) or { 0 } == rng.f32n(45) or { 0 }
 		assert rand.f64() == rng.f64()
-		assert rand.u32n(25) or { 0 } == rng.u32n(25) or { 0 }
+		assert rand.f64n(45) or { 0 } == rng.f64n(45) or { 0 }
 	}
 }
 
@@ -375,7 +435,7 @@ fn test_shuffle() {
 		for idx in 0 .. 10 {
 			assert digits[digit][idx] >= 10
 		}
-		// eprintln('digits[$digit]: ${digits[digit]}')
+		// eprintln('digits[${digit}]: ${digits[digit]}')
 	}
 }
 

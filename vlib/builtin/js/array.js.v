@@ -14,7 +14,7 @@ struct array_buffer {
 
 fn (mut a array_buffer) make_copy() {
 	if a.index_start != 0 || a.has_slice {
-		mut new_arr := JS.makeEmtpyJSArray()
+		mut new_arr := JS.makeEmptyJSArray()
 		for i in 0 .. a.len {
 			#new_arr.push(a.val.get(i))
 
@@ -67,8 +67,7 @@ fn v_sort(mut arr array, comparator fn (voidptr, voidptr) int) {
 	}
 }
 
-// trim trims the array length to "index" without modifying the allocated data. If "index" is greater
-// than len nothing will be changed.
+// trim trims the array length to "index" without modifying the allocated data. If "index" is greater than len nothing will be changed.
 pub fn (mut a array) trim(index int) {
 	if index < a.len {
 		a.len = index
@@ -105,7 +104,7 @@ pub fn (mut a array) trim(index int) {
 #return result;
 #}
 
-[unsafe]
+@[unsafe]
 pub fn (a array) repeat_to_depth(count int, depth int) array {
 	if count < 0 {
 		panic('array.repeat: count is negative: ${count}')
@@ -135,6 +134,9 @@ pub fn (a array) last() voidptr {
 }
 
 fn (a array) get(ix int) voidptr {
+	if ix < 0 || ix >= a.len {
+		return unsafe { nil }
+	}
 	mut result := unsafe { nil }
 	#result = a.arr.get(ix)
 
@@ -148,24 +150,29 @@ pub fn (a array) repeat(count int) array {
 }
 
 #function makeEmptyArray() { return new array(new array_buffer({ arr: [], len: new int(0), index_start: new int(0), cap: new int(0) })); }
-#function makeEmtpyJSArray() { return new Array(); }
+#function makeEmptyJSArray() { return new Array(); }
 
 fn JS.makeEmptyArray() array
-fn JS.makeEmtpyJSArray() JS.Array
+fn JS.makeEmptyJSArray() JS.Array
 fn empty_array() array {
 	return JS.makeEmptyArray()
 }
+
+#function v_clone_for_array_value(value) {
+#if (value instanceof $ref || value instanceof voidptr || typeof value === 'function') return value;
+#return v_clone_value(value);
+#}
 
 fn (a &array) set_len(i int) {
 	#a.arr.arr.length=i
 }
 
 pub fn (mut a array) sort_with_compare(compare voidptr) {
-	v_sort(mut a, compare)
+	#v_sort(a, compare instanceof voidptr ? compare.val : compare)
 }
 
 pub fn (mut a array) sort_with_compare_old(compare voidptr) {
-	#a.val.arr.arr.sort(compare)
+	#a.val.arr.arr.sort(compare instanceof voidptr ? compare.val : compare)
 }
 
 pub fn (mut a array) sort() {
@@ -174,6 +181,17 @@ pub fn (mut a array) sort() {
 
 pub fn (a array) index(v string) int {
 	for i in 0 .. a.len {
+		#if (a.arr.get(i).toString() == v.toString())
+
+		{
+			return i
+		}
+	}
+	return -1
+}
+
+pub fn (a array) last_index(v string) int {
+	for i := a.len - 1; i >= 0; i-- {
 		#if (a.arr.get(i).toString() == v.toString())
 
 		{
@@ -195,19 +213,22 @@ pub fn (a array) slice(start int, end int) array {
 
 pub fn (mut a array) insert(i int, val voidptr) {
 	#a.val.arr.make_copy()
-	#a.val.arr.arr.splice(i,0,val)
+	#a.val.arr.arr.splice(i,0,v_clone_for_array_value(val))
+	#a.val.arr.len.val = a.val.arr.arr.length
 }
 
 pub fn (mut a array) insert_many(i int, val voidptr, size int) {
-	#a.val.arr.arr.splice(i,0,...val.arr.slice(0,+size))
+	#a.val.arr.make_copy()
+	#a.val.arr.arr.splice(i,0,...val.arr.slice(0,+size).map(v_clone_for_array_value))
+	#a.val.arr.len.val = a.val.arr.arr.length
 }
 
 fn (mut a array) push(val voidptr) {
 	#a.val.arr.make_copy()
-	#if (arguments[2] && arguments[2].valueOf()) {a.val.arr.arr.push(...val)} else {
-	#a.val.arr.arr.push(val)
+	#if (arguments[2] && arguments[2].valueOf()) {a.val.arr.arr.push(...val.map(v_clone_for_array_value))} else {
+	#a.val.arr.arr.push(v_clone_for_array_value(val))
 	#}
-	#a.val.arr.len.val += 1
+	#a.val.arr.len.val = a.val.arr.arr.length
 }
 
 fn v_filter(arr array, callback fn (voidptr) bool) array {
@@ -222,13 +243,13 @@ fn v_filter(arr array, callback fn (voidptr) bool) array {
 }
 
 fn v_map(arr array, callback fn (voidptr) voidptr) array {
-	mut maped := empty_array()
+	mut mapped := empty_array()
 
 	for i := 0; i < arr.arr.len; i++ {
-		maped.push(callback(arr.arr.get(i)))
+		mapped.push(callback(arr.arr.get(i)))
 	}
 
-	return maped
+	return mapped
 }
 
 struct array_iterator {
@@ -285,10 +306,11 @@ fn arr_copy(mut dst array, src array, count int) {
 	}
 }
 
-// delete_many deletes `size` elements beginning with index `i`
+// delete_many deletes `size` elements beginning with index `i`.
 pub fn (mut a array) delete_many(i int, size int) {
 	#a.val.arr.make_copy()
 	#a.val.arr.arr.splice(i.valueOf(),size.valueOf())
+	#a.val.arr.len.val = a.val.arr.arr.length
 }
 
 // prepend prepends one value to the array.
@@ -297,7 +319,7 @@ pub fn (mut a array) prepend(val voidptr) {
 }
 
 // prepend_many prepends another array to this array.
-[unsafe]
+@[unsafe]
 pub fn (mut a array) prepend_many(val voidptr, size int) {
 	unsafe { a.insert_many(0, val, size) }
 }
@@ -317,11 +339,11 @@ pub fn (mut a array) reverse_in_place() {
 
 pub fn (mut a array) clear() {
 	#a.val.arr.make_copy()
-	#a.val.arr.arr.clear()
+	#a.val.arr.arr.length = 0
+	#a.val.arr.len.val = 0
 }
 
-// reduce executes a given reducer function on each element of the array,
-// resulting in a single output value.
+// reduce executes a given reducer function on each element of the array, resulting in a single output value.
 pub fn (a array) reduce(iter fn (int, int) int, accum_start int) int {
 	mut accum_ := accum_start
 	/*#for (let i = 0;i < a.arr.length;i++)  {
@@ -338,7 +360,7 @@ pub fn (mut a array) pop() voidptr {
 	mut res := unsafe { nil }
 	#a.val.arr.make_copy()
 	#res = a.val.arr.arr.pop()
-	#a.val.arr.len.val -= 1
+	#a.val.arr.len.val = a.val.arr.arr.length
 
 	return res
 }
@@ -369,7 +391,7 @@ pub fn (mut a array) delete_last() {
 	#a.val.arr.arr.pop();
 }
 
-[unsafe]
+@[unsafe]
 pub fn (a &array) free() {
 }
 
@@ -416,6 +438,11 @@ pub fn (a array) to_number_array() JS.Array {
 	return tmp
 }
 
+// push_many - appends multiple values to the end of the array.
+pub fn (mut a array) push_many(val voidptr, size int) {
+	a.insert_many(a.len, val, size)
+}
+
 type EveryFn = fn (JS.Number, JS.Number) JS.Boolean
 
 type BigEveryFn = fn (JS.BigInt, JS.Number) JS.Boolean
@@ -424,7 +451,7 @@ pub interface JS.TypedArray {
 mut:
 	byteLength JS.Number
 	byteOffset JS.Number
-	length JS.Number
+	length     JS.Number
 }
 
 pub interface JS.Uint8Array {

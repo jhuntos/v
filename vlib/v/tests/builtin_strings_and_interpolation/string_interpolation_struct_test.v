@@ -1,0 +1,172 @@
+// This file tests whether V can generate a convenience default .str() method
+// for a custom struct, when the developer has not defined one himself.
+// The .str() methods are used for string interpolation and for println() calls.
+struct Man {
+	name      string
+	age       int
+	interests []string
+}
+
+fn test_default_struct_string_interpolation() {
+	superman := Man{'Superman', 30, ['flying', 'fighting evil', 'being nice']}
+	s := '${superman}'
+	assert s.starts_with('Man{')
+	assert s.contains("name: 'Superman'")
+	assert s.contains('age: 30')
+	assert s.contains('interests: [')
+	assert s.contains("'being nice'")
+	assert s.ends_with('}')
+	// println(s)
+}
+
+struct Context {
+pub mut:
+	vb [8]f64
+}
+
+fn test_fixed_array_struct_string_interpolation() {
+	mut ctx := Context{}
+	x := 2.32
+	ctx.vb = [1.1, x, 3.3, 4.4, 5.0, 6.0, 7.0, 8.9]!
+	s := '${ctx}'
+	assert s.starts_with('Context{')
+	assert s.contains('vb: [1.1, 2.32, 3.3, 4.4, 5.0, 6.0, 7.0, 8.9]')
+	assert s.ends_with('}')
+}
+
+struct Info {
+	name string
+	dict map[string]int
+}
+
+fn test_struct_map_field_string_interpolation() {
+	info := Info{
+		name: 'test'
+		dict: {
+			'a': int(1)
+			'b': 2
+		}
+	}
+	s := '${info}'
+	assert s.starts_with('Info{')
+	assert s.contains("name: 'test'")
+	assert s.contains("dict: {'a': 1, 'b': 2}")
+	assert s.ends_with('}')
+}
+
+struct Circular {
+mut:
+	next &Circular
+}
+
+fn test_stack_circular_elem_auto_str() {
+	mut elem := Circular{unsafe { nil }}
+	elem.next = &elem
+	s := '${elem}'.replace('\n', '|')
+	assert s == 'Circular{|    next: &<circular>|}'
+}
+
+fn test_heap_circular_elem_auto_str() {
+	mut elem := &Circular{unsafe { nil }}
+	elem.next = elem
+	s := '${elem}'.replace('\n', '|')
+	assert s == '&Circular{|    next: &<circular>|}'
+}
+
+struct CrossRefWindow {
+mut:
+	widgets []CrossRefWidget
+}
+
+struct CrossRefWidget {
+mut:
+	parent &CrossRefWindow = unsafe { nil }
+}
+
+fn test_cross_reference_field_auto_str() {
+	mut window := &CrossRefWindow{}
+	mut widget := &CrossRefWidget{}
+	widget.parent = window
+	window.widgets << widget
+	s := '${window}'.replace('\n', '|')
+	assert s == '&CrossRefWindow{|    widgets: [CrossRefWidget{|        parent: &CrossRefWindow{|            widgets: [CrossRefWidget{|                parent: &<circular>|            }]|        }|    }]|}'
+}
+
+interface FamilyMember {
+	name string
+	age  u64
+}
+
+struct FamilySelf {
+mut:
+	brothers []&FamilyMember
+	name     string
+	age      u64
+}
+
+struct FamilyBrother {
+mut:
+	brothers []&FamilyMember
+	name     string
+	age      u64
+}
+
+fn test_cross_reference_interface_pointer_array_auto_str() {
+	mut me := &FamilySelf{
+		name: 'Foo'
+		age:  33
+	}
+	mut brother := &FamilyBrother{
+		name: 'Bar'
+		age:  32
+	}
+	me.brothers << brother
+	brother.brothers << me
+	s := '${me}'
+	assert s.contains('&FamilySelf{')
+	assert s.contains('brothers: [&FamilyMember(FamilyBrother{')
+	assert s.contains("name: 'Foo'")
+	assert s.contains("name: 'Bar'")
+	assert s.contains('brothers: [&<circular>]')
+}
+
+struct CircularArray {
+mut:
+	children []CircularArray
+}
+
+fn test_circular_array_field_auto_str_keeps_item_count() {
+	mut value := CircularArray{}
+	value.children << CircularArray{}
+	value.children << CircularArray{}
+	s := '${value}'.replace('\n', '|')
+	assert s == 'CircularArray{|    children: [<circular>, <circular>]|}'
+}
+
+struct ReturnedTree {
+mut:
+	root ReturnedNode
+	refs map[string]&ReturnedNode
+}
+
+@[heap]
+struct ReturnedNode {
+mut:
+	children []ReturnedNode
+}
+
+fn make_returned_tree() ReturnedTree {
+	mut tree := ReturnedTree{}
+	tree.root.children << ReturnedNode{}
+	tree.refs['root'] = &tree.root
+	tree.refs['child'] = &tree.root.children[0]
+	return tree
+}
+
+fn test_returned_struct_with_internal_pointer_map_field_auto_str() {
+	tree := make_returned_tree()
+	s := '${tree}'.replace('\n', '|')
+	assert s.contains('ReturnedTree{|')
+	assert s.contains('root: ReturnedNode{|        children: [<circular>]|    }')
+	assert s.contains("refs: {'root': &ReturnedNode{|        children: [<circular>]|    }, 'child': &ReturnedNode{|        children: []|    }}")
+}

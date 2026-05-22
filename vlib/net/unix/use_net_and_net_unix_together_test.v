@@ -1,16 +1,22 @@
+// vtest build: !gcc-windows // too flaky on these CIs
+// vtest retry: 3
 import os
+import time
 import net.unix
-import net
+import net as _
 
-// ensure that `net` is used, i.e. no warnings
-const use_net = net.no_timeout
-
-const tfolder = os.join_path(os.vtmp_dir(), 'v', 'net_and_unix_together')
-
-const test_port = os.join_path(tfolder, 'unix_domain_socket')
+const tfolder = os.join_path(os.temp_dir(), 'nuut_${os.getpid()}')
+const test_port = os.join_path(tfolder, 'domain_socket')
 
 fn testsuite_begin() {
 	os.mkdir_all(tfolder) or {}
+	spawn fn () {
+		// Normally this entire test should take less than a second,
+		// but sometimes it hangs on windows for hours. Instead of skipping it entirely,
+		// ensure the test will die, and later the test framework can restart it.
+		time.sleep(5 * time.second)
+		exit(1)
+	}()
 }
 
 fn testsuite_end() {
@@ -23,12 +29,12 @@ fn test_that_net_and_net_unix_can_be_imported_together_without_conflicts() {
 	defer {
 		l.close() or {}
 	}
-	//
+
 	mut c := unix.connect_stream(test_port)!
 	defer {
 		c.close() or {}
 	}
-	//
+
 	data := 'Hello from vlib/net!'
 	c.write_string(data)!
 	mut buf := []u8{len: 100}

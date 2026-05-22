@@ -1,5 +1,17 @@
 module maps
 
+interface TestValue {
+	value() string
+}
+
+struct TestValueImpl {
+	raw string
+}
+
+fn (v TestValueImpl) value() string {
+	return v.raw
+}
+
 fn test_filter() {
 	m1 := {
 		0: 'ab'
@@ -34,6 +46,33 @@ fn test_to_array() {
 	assert to_array(m1, fn (k rune, v string) string {
 		return '${k}${v}'
 	}) == ['abc', 'def', 'ghi']
+}
+
+fn test_helpers_with_interface_map_values() {
+	m1 := {
+		'a': TestValue(TestValueImpl{'bc'})
+		'd': TestValue(TestValueImpl{'ef'})
+		'g': TestValue(TestValueImpl{'hi'})
+	}
+	filtered := filter(m1, fn (k string, v TestValue) bool {
+		return k == 'a' || v.value() == 'ef'
+	})
+	assert filtered.len == 2
+	assert filtered['a'].value() == 'bc'
+	assert filtered['d'].value() == 'ef'
+	assert to_array(m1, fn (k string, v TestValue) string {
+		return '${k}${v.value()}'
+	}) == ['abc', 'def', 'ghi']
+	assert flat_map[string, TestValue, string](m1, fn (k string, v TestValue) []string {
+		return [k, v.value()]
+	}) == ['a', 'bc', 'd', 'ef', 'g', 'hi']
+	assert to_map[string, TestValue, string, string](m1, fn (k string, v TestValue) (string, string) {
+		return k, v.value()
+	}) == {
+		'a': 'bc'
+		'd': 'ef'
+		'g': 'hi'
+	}
 }
 
 fn test_flat_map() {
@@ -105,5 +144,93 @@ fn test_from_array() {
 		3: 'd'
 		4: 'e'
 		5: 'f'
+	}
+}
+
+fn test_merge_in_place() {
+	mut m1 := {
+		'abc': 'def'
+		'aa':  'bb'
+	}
+	m2 := {
+		'xyz': 'zyx'
+		'aa':  'dd'
+	}
+	merge_in_place(mut m1, m2)
+	assert m1 == {
+		'abc': 'def'
+		'aa':  'dd'
+		'xyz': 'zyx'
+	}
+	assert m2 == {
+		'xyz': 'zyx'
+		'aa':  'dd'
+	}
+
+	mut im1 := {
+		11: 22
+		33: 44
+	}
+	im2 := {
+		55: 66
+		33: 999
+	}
+	merge_in_place(mut im1, im2)
+	assert im1 == {
+		11: 22
+		33: 999
+		55: 66
+	}
+	assert im2 == {
+		55: 66
+		33: 999
+	}
+}
+
+fn test_merge() {
+	m1 := {
+		'abc': 'def'
+		'aa':  'bb'
+	}
+	m2 := {
+		'xyz': 'zyx'
+		'aa':  'dd'
+	}
+	res := merge(m1, m2)
+	assert res == {
+		'abc': 'def'
+		'aa':  'dd'
+		'xyz': 'zyx'
+	}
+	assert m1 == {
+		'abc': 'def'
+		'aa':  'bb'
+	}
+	assert m2 == {
+		'xyz': 'zyx'
+		'aa':  'dd'
+	}
+
+	mut im1 := {
+		11: 22
+		33: 44
+	}
+	im2 := {
+		55: 66
+		33: 999
+	}
+	ires := merge(im1, im2)
+	assert im1 == {
+		11: 22
+		33: 44
+	}
+	assert im2 == {
+		55: 66
+		33: 999
+	}
+	assert ires == {
+		11: 22
+		33: 999
+		55: 66
 	}
 }

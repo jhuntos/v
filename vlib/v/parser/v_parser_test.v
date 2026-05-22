@@ -1,3 +1,4 @@
+// vtest build: tinyc && !sanitized_job?
 module parser
 
 // import v.eval
@@ -6,6 +7,10 @@ import v.gen.c
 import v.checker
 import v.pref
 import term
+import os
+import benchmark
+
+const vroot = os.dir(os.dir(os.dir(os.dir(@FILE))))
 
 fn test_eval() {
 	/*
@@ -37,7 +42,7 @@ fn test_eval() {
 	vpref := &pref.Preferences{}
 	mut scope := &ast.Scope{
 		start_pos: 0
-		parent: 0
+		parent: unsafe { nil }
 	}
 	mut stmts := []ast.Stmt{}
 	for input in inputs {
@@ -59,59 +64,58 @@ fn test_eval() {
 	return
 }
 
-fn test_parse_file() {
-	if true {
-		return
-	}
-	s := '
+fn test_parse_text() {
+	println(@LOCATION)
+	source_text := '
 fn foo() int {
 	f := 23
-	return 10+4
+	return 10+4+f
 }
+fn ff(x int) {}
 
-12 + 3
-x := 10
-5+7
-8+4
+fn main() {
+  ff(12 + 3)
+  x := 10
+  bar(5+7)
+  ff(8+x)
+}
 '
-	table := ast.new_table()
+	mut table := ast.new_table()
 	vpref := &pref.Preferences{}
-	mut prog := parse_file(s, table, .skip_comments, vpref)
+	mut prog := parse_text(source_text, '', mut table, .skip_comments, vpref)
 	mut checker_ := checker.new_checker(table, vpref)
 	checker_.check(mut prog)
-	res, _, _, _ := c.gen([prog], table, vpref)
-	println(res)
 }
 
 fn test_one() {
 	if true {
 		return
 	}
-	println('\n\ntest_one()')
+	println(@LOCATION)
 	input := ['a := 10', 'b := -a', 'c := 20']
 	expected := 'int a = 10;int b = -a;int c = 20;'
-	table := ast.new_table()
+	mut table := ast.new_table()
 	vpref := &pref.Preferences{}
-	scope := &ast.Scope{
+	mut scope := &ast.Scope{
 		start_pos: 0
-		parent: 0
 	}
 	mut e := []ast.Stmt{}
 	for line in input {
-		e << parse_stmt(line, table, scope)
+		e << parse_stmt(line, mut table, mut scope)
 	}
 	mut program := &ast.File{
-		stmts: e
-		scope: scope
+		stmts:        e
+		scope:        scope
 		global_scope: scope
 	}
 	mut checker_ := checker.new_checker(table, vpref)
 	checker_.check(mut program)
-	mut res, _, _, _ := c.gen([program], table, vpref)
-	res = res.replace('\n', '').trim_space().after('#endif')
+	result := c.gen([program], mut table, vpref)
+	res := result.res_builder.bytestr().replace('\n', '').trim_space().after('#endif')
 	println(res)
 	ok := expected == res
 	println(res)
+	dump(ok)
 	assert ok
 	if !ok {
 	}
@@ -119,6 +123,7 @@ fn test_one() {
 }
 
 fn test_parse_expr() {
+	println(@LOCATION)
 	if true {
 		return
 	}
@@ -132,25 +137,24 @@ fn test_parse_expr() {
 		'string s = tos3("hi");', 'x = 11;', 'a += 10;', '1.2 + 3.4;', '4 + 4;', '1 + 2 * 5;',
 		'-a + 1;', '2 + 2;']
 	mut e := []ast.Stmt{}
-	table := ast.new_table()
+	mut table := ast.new_table()
 	vpref := &pref.Preferences{}
 	mut chk := checker.new_checker(table, vpref)
-	scope := &ast.Scope{
+	mut scope := &ast.Scope{
 		start_pos: 0
-		parent: 0
 	}
 	for s in input {
 		println('\n\nst="${s}"')
-		e << parse_stmt(s, table, scope)
+		e << parse_stmt(s, mut table, mut scope)
 	}
 	mut program := &ast.File{
-		stmts: e
-		scope: scope
+		stmts:        e
+		scope:        scope
 		global_scope: scope
 	}
 	chk.check(mut program)
-	mut res, _, _, _ := c.gen([program], table, vpref)
-	res = res.after('#endif')
+	result := c.gen([program], mut table, vpref)
+	res := result.res_builder.bytestr().after('#endif')
 	println('========')
 	println(res)
 	println('========')
@@ -175,20 +179,20 @@ fn test_parse_expr() {
 }
 
 fn test_num_literals() {
+	println(@LOCATION)
 	inputs := [
 		'a := -1',
 		'b := -12.e17',
 		'c := -12.',
 		'd := -a',
 	]
-	table := ast.new_table()
+	mut table := ast.new_table()
 	mut scope := &ast.Scope{
 		start_pos: 0
-		parent: 0
 	}
 	mut rhs_types := []string{}
 	for input in inputs {
-		stmt := parse_stmt(input, table, scope)
+		stmt := parse_stmt(input, mut table, mut scope)
 		r := (stmt as ast.AssignStmt).right
 		match r[0] {
 			ast.IntegerLiteral { rhs_types << 'int literal' }
@@ -212,13 +216,14 @@ table := &ast.Table{}
 for s in text_expr {
 	// print using str method
 	x := parse_expr(s, table)
-	println('source: $s')
-	println('parsed: $x')
+	println('source: ${s}')
+	println('parsed: ${x}')
 	println('===================')
 }
 */
 
 fn test_fn_is_html_open_tag() {
+	println(@LOCATION)
 	mut s := '<style>'
 	mut b := is_html_open_tag('style', s)
 	assert b == true
@@ -229,41 +234,272 @@ fn test_fn_is_html_open_tag() {
 
 	s = '<style/>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = 'styl'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = 'style'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<style'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<<style>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<style>>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<stylex>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<html>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 
 	s = '<script>'
 	b = is_html_open_tag('style', s)
-	assert b == false
+	assert !b
 }
 
-// For issue #15516
-fn test_anon_struct() {
+fn scan_v(mut files []string, path string) ! {
+	for i in os.ls(path)! {
+		p := os.join_path(path, i)
+		if !os.exists(p) {
+			continue
+		}
+		if os.is_file(p) {
+			if i.ends_with('.v') && !i.contains_any_substr(['_test.', 'test_', 'tests_']) {
+				files << p
+			}
+		} else {
+			if !i.starts_with('test') && !i.ends_with('_tests') && !i.ends_with('builtin') {
+				scan_v(mut files, p)!
+			}
+		}
+	}
+}
+
+fn parse(output_mode pref.OutputMode) ! {
+	mut b := benchmark.start()
+	mut files := []string{}
+	//	mode_files := os.walk_ext(os.join_path(vroot, 'vlib/v/parser/testdata/${output_mode}'), '.vv')
+	//	files << mode_files
+	scan_v(mut files, os.join_path(vroot, 'vlib'))!
+	scan_v(mut files, os.join_path(vroot, 'cmd'))!
+	mut pref_ := pref.new_preferences()
+	pref_.output_mode = output_mode
+	for idx, f in files {
+		// eprintln('> parsing in mode: ${output_mode}, ${idx+1:5}/${files.len} ${f} ...')
+		mut table := ast.new_table()
+		p := parse_file(f, mut table, .parse_comments, pref_)
+		assert !isnil(p), 'failed to parse `${f}` in mode: ${output_mode}'
+		assert p.errors.len == 0, 'file ${f} should have been parsed with 0 errors'
+	}
+	b.measure('parsing ${files.len} files in ${output_mode} mode')
+}
+
+fn test_parse_with_silent() {
+	println(@LOCATION)
+	parse(.silent)!
+}
+
+fn test_parse_with_stdout() {
+	println(@LOCATION)
+	$if windows {
+		// On Windows with TCC, parsing in stdout mode can crash due to
+		// exit() being called inside the parser on parse errors, which
+		// corrupts memory under TCC's runtime.
+		eprintln('> skipping stdout mode parsing test on Windows')
+		return
+	}
+	parse(.stdout)!
+}
+
+fn test_parse_vls_info() {
+	println(@LOCATION)
+	source_text := '
+// not_my_const comment line1
+// my_const comment line2
+const my_const = 123	// my_const end_comment
+
+// not_MyS comment line1
+// MyS comment line2
+struct MyS {
+	// a comment line1
+	// a comment line2
+	a int	// a end_comment
+	// b comment line1
+	// b comment line2
+	b int	// b end_comment
+}
+
+// not_MyInterface comment line1
+// MyInterface comment line2
+interface MyInterface {
+	// method comment line1
+	// method comment line2
+	method() string	// method end_comment
+	// data comment line1
+	// data comment line2
+	data int // data end_comment
+}
+
+// not_my_global comment line1
+// my_global comment line2
+__global my_global = 456	// my_global end_comment
+
+// not_MyAlias comment line1
+// MyAlias comment line2
+type MyAlias = u8	// MyAlias end_comment
+
+// not_MySum comment line1
+// MySum comment line2
+type MySum = u8 | u16	// MySum end_comment
+
+// not_MyFnType comment line1
+// MyFnType comment line2
+type MyFnType = fn (msg &char, arg usize)	// MyFnType end_comment
+
+
+// not_MyEnum comment line1
+// MyEnum comment line2
+enum MyEnum {
+	// x comment line1
+	// x comment line2
+	x	// x end_comment
+	// y comment line1
+	// y comment line2
+	y	// y end_comment
+}
+
+// not_add comment line1
+// add comment line2
+fn (mut k MyS) add(val int) {
+	k.a += val
+}
+
+
+// not_foo comment line1
+// foo comment line2
+fn foo() int {
+	f := 23
+	return 10+4+f
+}
+
+// not_ff comment line1
+// ff comment line2
+fn ff(x int) {}	// ff end_comment
+
+// not_main comment line1
+// main comment line2
+fn main() {
+  ff(12 + 3)
+  x := 10
+  bar(5+7)
+  ff(8+x)
+}
+'
+	mut table := ast.new_table()
+	vpref := &pref.Preferences{
+		enable_globals: true
+		is_vls:         true
+	}
+	mut prog := parse_text(source_text, '', mut table, .parse_comments, vpref)
+	mut checker_ := checker.new_checker(table, vpref)
+	checker_.check(mut prog)
+
+	assert 'const_main.my_const' in table.vls_info
+	assert 'struct_main.MyS' in table.vls_info
+	assert 'struct_main.MyS.a' in table.vls_info
+	assert 'struct_main.MyS.b' in table.vls_info
+	assert 'interface_main.MyInterface' in table.vls_info
+	assert 'fn_main[MyInterface]method' in table.vls_info // MyInterface method
+	assert 'interface_main.MyInterface.data' in table.vls_info
+	assert 'fn_main[MyS]add' in table.vls_info // MyS method
+	assert 'fn_main[]foo' in table.vls_info
+	assert 'global_main.my_global' in table.vls_info // module specific global
+	assert 'global_my_global' in table.vls_info
+	assert 'aliastype_main.MyAlias' in table.vls_info
+	assert 'sumtype_main.MySum' in table.vls_info
+	assert 'fntype_main.MyFnType' in table.vls_info
+	assert 'enum_main.MyEnum' in table.vls_info
+	assert 'enum_main.MyEnum.x' in table.vls_info
+	assert 'enum_main.MyEnum.y' in table.vls_info
+	dump(table.vls_info['const_main.my_const'])
+	dump(table.vls_info['struct_main.MyS'])
+	dump(table.vls_info['struct_main.MyS.a'])
+	dump(table.vls_info['struct_main.MyS.b'])
+	dump(table.vls_info['interface_main.MyInterface'])
+	dump(table.vls_info['fn_main[MyInterface]method'])
+	dump(table.vls_info['interface_main.MyInterface.data'])
+	dump(table.vls_info['fn_main[MyS]add'])
+	dump(table.vls_info['fn_main[]foo'])
+	dump(table.vls_info['global_main.my_global'])
+	dump(table.vls_info['global_my_global'])
+	dump(table.vls_info['aliastype_main.MyAlias'])
+	dump(table.vls_info['sumtype_main.MySum'])
+	dump(table.vls_info['fntype_main.MyFnType'])
+	dump(table.vls_info['enum_main.MyEnum'])
+	dump(table.vls_info['enum_main.MyEnum.x'])
+	dump(table.vls_info['enum_main.MyEnum.y'])
+	assert table.vls_info['const_main.my_const'].doc.trim_space() == 'my_const comment line2
+my_const end_comment'
+	assert table.vls_info['struct_main.MyS'].doc.trim_space() == 'MyS comment line2'
+	assert table.vls_info['struct_main.MyS.a'].doc.trim_space() == 'a comment line1
+a comment line2
+a end_comment'
+	assert table.vls_info['struct_main.MyS.b'].doc.trim_space() == 'b comment line1
+b comment line2
+b end_comment'
+	assert table.vls_info['interface_main.MyInterface'].doc.trim_space() == 'MyInterface comment line2'
+	assert table.vls_info['fn_main[MyInterface]method'].doc.trim_space() == 'method comment line1
+method comment line2
+method end_comment'
+	assert table.vls_info['interface_main.MyInterface.data'].doc.trim_space() == 'data comment line1
+data comment line2
+data end_comment'
+	assert table.vls_info['fn_main[MyS]add'].doc.trim_space() == 'add comment line2'
+	assert table.vls_info['fn_main[]foo'].doc.trim_space() == 'foo comment line2'
+	assert table.vls_info['global_main.my_global'].doc.trim_space() == 'my_global comment line2'
+	assert table.vls_info['global_my_global'].doc.trim_space() == 'my_global comment line2'
+	assert table.vls_info['aliastype_main.MyAlias'].doc.trim_space() == 'MyAlias comment line2
+MyAlias end_comment'
+	assert table.vls_info['sumtype_main.MySum'].doc.trim_space() == 'MySum comment line2
+MySum end_comment'
+	assert table.vls_info['fntype_main.MyFnType'].doc.trim_space() == 'MyFnType comment line2
+MyFnType end_comment'
+	assert table.vls_info['enum_main.MyEnum'].doc.trim_space() == 'MyEnum comment line2'
+	assert table.vls_info['enum_main.MyEnum.x'].doc.trim_space() == 'x comment line1
+x comment line2
+x end_comment'
+	assert table.vls_info['enum_main.MyEnum.y'].doc.trim_space() == 'y comment line1
+y comment line2
+y end_comment'
+}
+
+fn test_no_closure_auto_import_for_field_names() {
+	vpref := &pref.Preferences{}
+	for field_name in ast.builtin_array_generic_methods {
+		source := 'struct Sample {
+mut:
+	${field_name} u32
+}
+
+fn use_field(mut sample Sample) {
+	_ = sample.${field_name}
+	sample.${field_name}++
+}
+'
+		mut table := ast.new_table()
+		prog := parse_text(source, '', mut table, .skip_comments, vpref)
+		assert 'builtin.closure' !in prog.auto_imports
+	}
 }

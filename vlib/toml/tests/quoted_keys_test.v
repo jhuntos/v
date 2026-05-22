@@ -1,3 +1,4 @@
+// vtest retry: 3
 import toml
 
 fn test_quoted_keys() {

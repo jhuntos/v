@@ -21,6 +21,31 @@ pub fn floor(x f64) f64 {
 	return d
 }
 
+// floorf returns the greatest integer value less than or equal to x.
+//
+// special cases are:
+// floor(±0) = ±0
+// floor(±inf) = ±inf
+// floor(nan) = nan
+pub fn floorf(x f32) f32 {
+	// TODO
+	return f32(floor(f64(x)))
+	/*
+	if x == 0 || is_nan(x) || is_inf(x, 0) {
+		return x
+	}
+	if x < 0 {
+		mut d, fract := modf(-x)
+		if fract != 0.0 {
+			d = d + 1
+		}
+		return -d
+	}
+	d, _ := modf(x)
+	return d
+	*/
+}
+
 // ceil returns the least integer value greater than or equal to x.
 //
 // special cases are:
@@ -52,27 +77,25 @@ pub fn trunc(x f64) f64 {
 // round(±inf) = ±inf
 // round(nan) = nan
 pub fn round(x f64) f64 {
-	if x == 0 || is_nan(x) || is_inf(x, 0) {
-		return x
-	}
-	// Largest integer <= x
-	mut y := floor(x) // Fractional part
-	mut r := x - y // Round up to nearest.
-	if r > 0.5 {
-		unsafe {
-			goto rndup
+	mut bits := f64_bits(x)
+	mut e_ := (bits >> shift) & mask
+	if e_ < bias {
+		// Round abs(x) < 1 including denormals.
+		bits &= sign_mask // +-0
+		if e_ == bias - 1 {
+			bits |= uvone // +-1
 		}
+	} else if e_ < bias + shift {
+		// Round any abs(x) >= 1 containing a fractional component [0,1).
+		//
+		// Numbers with larger exponents are returned unchanged since they
+		// must be either an integer, infinity, or NaN.
+		half := u64(1) << (shift - 1)
+		e_ -= bias
+		bits += half >> e_
+		bits &= ~(frac_mask >> e_)
 	}
-	// Round to even
-	if r == 0.5 {
-		r = y - 2.0 * floor(0.5 * y)
-		if r == 1.0 {
-			rndup:
-			y += 1.0
-		}
-	}
-	// Else round down.
-	return y
+	return f64_from_bits(bits)
 }
 
 // Returns the rounded float, with sig_digits of precision.
@@ -120,9 +143,8 @@ pub fn round_to_even(x f64) f64 {
 		// number is even or odd (respectively).
 		half_minus_ulp := u64(u64(1) << (shift - 1)) - 1
 		e_ -= u64(bias)
-		bits += (half_minus_ulp + (bits >> (shift - e_)) & 1) >> e_
-		bits &= frac_mask >> e_
-		bits ^= frac_mask >> e_
+		bits += safe_shift(half_minus_ulp + safe_shift(bits, shift - e_) & 1, e_)
+		bits &= ~safe_shift(frac_mask, e_)
 	} else if e_ == bias - 1 && bits & frac_mask != 0 {
 		// round 0.5 < abs(x) < 1.
 		bits = bits & sign_mask | uvone // +-1
@@ -131,4 +153,13 @@ pub fn round_to_even(x f64) f64 {
 		bits &= sign_mask // +-0
 	}
 	return f64_from_bits(bits)
+}
+
+@[inline]
+fn safe_shift(value u64, shift u64) u64 {
+	return if shift > u64(63) {
+		u64(0)
+	} else {
+		value >> shift
+	}
 }

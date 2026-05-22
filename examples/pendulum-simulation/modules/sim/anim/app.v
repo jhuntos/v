@@ -1,16 +1,15 @@
 module anim
 
 import gg
-import gx
 import sim
 import sim.args as simargs
 
-const bg_color = gx.white
+const bg_color = gg.white
 
 struct Pixel {
 	x     f32
 	y     f32
-	color gx.Color
+	color gg.Color
 }
 
 pub struct App {
@@ -28,19 +27,19 @@ pub fn new_app(args simargs.ParallelArgs) &App {
 	total_pixels := args.grid.height * args.grid.width
 
 	mut app := &App{
-		args: args
-		pixels: []u32{len: total_pixels}
+		args:         args
+		pixels:       []u32{len: total_pixels}
 		request_chan: chan &sim.SimRequest{cap: args.grid.width}
 	}
 	app.gg = gg.new_context(
-		width: args.grid.width
-		height: args.grid.height
+		width:         args.grid.width
+		height:        args.grid.height
 		create_window: true
-		window_title: 'V Pendulum Simulation'
-		user_data: app
-		bg_color: anim.bg_color
-		frame_fn: frame
-		init_fn: init
+		window_title:  'V Pendulum Simulation'
+		user_data:     app
+		bg_color:      bg_color
+		frame_fn:      frame
+		init_fn:       init
 	)
 	return app
 }

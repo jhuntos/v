@@ -1,12 +1,14 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module parser
 
 import v.ast
 import v.token
+import v.pkgconfig
+import v.pref
 
-fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
+fn (mut p Parser) if_expr(is_comptime bool, is_expr bool) ast.IfExpr {
 	was_inside_if_expr := p.inside_if_expr
 	was_inside_ct_if_expr := p.inside_ct_if_expr
 	defer {
@@ -14,7 +16,7 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 		p.inside_ct_if_expr = was_inside_ct_if_expr
 	}
 	p.inside_if_expr = true
-	is_expr := p.prev_tok.kind == .key_return
+	is_expr_ := p.prev_tok.kind == .key_return || is_expr
 	mut pos := p.tok.pos()
 	if is_comptime {
 		p.inside_ct_if_expr = true
@@ -25,6 +27,8 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 	mut has_else := false
 	mut comments := []ast.Comment{}
 	mut prev_guard := false
+	mut comptime_skip_curr_stmts := false
+	mut comptime_has_true_branch := false
 	for p.tok.kind in [.key_if, .key_else] {
 		p.inside_if = true
 		if is_comptime {
@@ -50,19 +54,31 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 				// only declare `err` if previous branch was an `if` guard
 				if prev_guard {
 					p.scope.register(ast.Var{
-						name: 'err'
-						typ: ast.error_type
-						pos: p.tok.pos()
-						is_used: true
+						name:         'err'
+						typ:          ast.error_type
+						pos:          p.tok.pos()
+						is_used:      false
 						is_stack_obj: true
+						is_special:   true
 					})
 				}
-				branches << ast.IfBranch{
-					stmts: p.parse_block_no_scope(false)
-					pos: start_pos.extend(end_pos)
-					body_pos: body_pos.extend(p.tok.pos())
-					comments: comments
-					scope: p.scope
+				if is_comptime && comptime_has_true_branch && !p.pref.is_fmt
+					&& !p.pref.output_cross_c {
+					p.skip_scope()
+					branches << ast.IfBranch{
+						pos:      start_pos.extend(end_pos)
+						body_pos: body_pos.extend(p.tok.pos())
+						comments: comments
+						scope:    p.scope
+					}
+				} else {
+					branches << ast.IfBranch{
+						stmts:    p.parse_block_no_scope(false)
+						pos:      start_pos.extend(end_pos)
+						body_pos: body_pos.extend(p.tok.pos())
+						comments: comments
+						scope:    p.scope
+					}
 				}
 				p.close_scope()
 				comments = []
@@ -72,6 +88,7 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 				p.check(.dollar)
 			}
 		}
+		if_pos := p.tok.pos()
 		// `if` or `else if`
 		p.check(.key_if)
 		if p.tok.kind == .key_match {
@@ -95,7 +112,7 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 					is_mut = true
 					p.next()
 				}
-				var.is_mut = is_mut
+				var.is_mut = p.scope_var_is_mut(is_mut)
 				var.pos = p.tok.pos()
 				var.name = p.check_name()
 				var_names << var.name
@@ -112,7 +129,10 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 			comments << p.eat_comments()
 			p.check(.decl_assign)
 			comments << p.eat_comments()
+			old_assign_rhs := p.inside_assign_rhs
+			p.inside_assign_rhs = true
 			expr := p.expr(0)
+			p.inside_assign_rhs = old_assign_rhs
 			if expr !in [ast.CallExpr, ast.IndexExpr, ast.PrefixExpr, ast.SelectorExpr, ast.Ident] {
 				p.error_with_pos('if guard condition expression is illegal, it should return an Option',
 					expr.pos())
@@ -127,10 +147,10 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 			}
 			for var in vars {
 				p.scope.register(ast.Var{
-					name: var.name
+					name:   var.name
 					is_mut: var.is_mut
-					expr: cond
-					pos: var.pos
+					expr:   cond
+					pos:    var.pos
 				})
 			}
 			prev_guard = true
@@ -139,6 +159,23 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 			p.comptime_if_cond = true
 			p.inside_if_cond = true
 			cond = p.expr(0)
+			if is_comptime && p.is_in_top_level_comptime(p.inside_assign_rhs) {
+				comptime_skip_curr_stmts = !p.comptime_if_cond(mut cond)
+				if !comptime_skip_curr_stmts {
+					comptime_has_true_branch = true
+				}
+			}
+			if mut cond is ast.InfixExpr && !is_comptime {
+				if cond.op in [.key_is, .not_is] {
+					if mut cond.left is ast.Ident {
+						if cond.left.name.len == 1 && cond.left.name.is_capital()
+							&& cond.right is ast.TypeNode {
+							p.error_with_pos('use `\$if` instead of `if`', if_pos)
+							return ast.IfExpr{}
+						}
+					}
+				}
+			}
 			p.inside_if_cond = false
 			if p.if_cond_comments.len > 0 {
 				comments << p.if_cond_comments
@@ -151,15 +188,33 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 		body_pos := p.tok.pos()
 		p.inside_if = false
 		p.inside_comptime_if = false
+		if p.opened_scopes > p.max_opened_scopes {
+			p.should_abort = true
+			p.error('too many nested conditionals, scopes: ${p.opened_scopes}')
+			return ast.IfExpr{}
+		}
 		p.open_scope()
-		stmts := p.parse_block_no_scope(false)
-		branches << ast.IfBranch{
-			cond: cond
-			stmts: stmts
-			pos: start_pos.extend(end_pos)
-			body_pos: body_pos.extend(p.prev_tok.pos())
-			comments: comments
-			scope: p.scope
+		if is_comptime && comptime_skip_curr_stmts
+			&& p.is_in_top_level_comptime(p.inside_assign_rhs) && !p.pref.is_fmt
+			&& !p.pref.output_cross_c {
+			p.skip_scope()
+			branches << ast.IfBranch{
+				cond:     cond
+				pos:      start_pos.extend(end_pos)
+				body_pos: body_pos.extend(p.prev_tok.pos())
+				comments: comments
+				scope:    p.scope
+			}
+		} else {
+			stmts := p.parse_block_no_scope(false)
+			branches << ast.IfBranch{
+				cond:     cond
+				stmts:    stmts
+				pos:      start_pos.extend(end_pos)
+				body_pos: body_pos.extend(p.prev_tok.pos())
+				comments: comments
+				scope:    p.scope
+			}
 		}
 		p.close_scope()
 		if is_guard {
@@ -184,12 +239,12 @@ fn (mut p Parser) if_expr(is_comptime bool) ast.IfExpr {
 		pos.last_line = comments.last().pos.last_line
 	}
 	return ast.IfExpr{
-		is_comptime: is_comptime
-		branches: branches
+		is_comptime:   is_comptime
+		branches:      branches
 		post_comments: comments
-		pos: pos
-		has_else: has_else
-		is_expr: is_expr
+		pos:           pos
+		has_else:      has_else
+		is_expr:       is_expr_
 	}
 }
 
@@ -199,6 +254,8 @@ fn (mut p Parser) is_only_array_type() bool {
 			if p.peek_token(i).kind == .rsbr {
 				next_kind := p.peek_token(i + 1).kind
 				if next_kind == .name {
+					return true
+				} else if next_kind == .question && p.peek_token(i + 2).kind == .name {
 					return true
 				} else if next_kind == .lsbr {
 					continue
@@ -211,48 +268,188 @@ fn (mut p Parser) is_only_array_type() bool {
 	return false
 }
 
-fn (mut p Parser) match_expr() ast.MatchExpr {
-	match_first_pos := p.tok.pos()
-	mut else_count := 0
+fn (mut p Parser) is_match_sumtype_type() bool {
+	is_option := p.tok.kind == .question
+	name_tok := if is_option { p.peek_tok } else { p.tok }
+	next_tok_kind := if is_option { p.peek_token(2).kind } else { p.peek_tok.kind }
+	next_next_idx := if is_option { 3 } else { 2 }
+	next_next_tok := p.peek_token(next_next_idx)
+	return name_tok.kind == .name && !(name_tok.lit == 'C' && next_tok_kind == .dot)
+		&& (((ast.builtin_type_names_matcher.matches(name_tok.lit) || name_tok.lit[0].is_capital())
+		&& next_tok_kind != .lpar && !(next_tok_kind == .dot && next_next_tok.kind == .name
+		&& p.peek_token(next_next_idx + 1).kind == .lpar)) || (next_tok_kind == .dot
+		&& next_next_tok.lit.len > 0 && next_next_tok.lit[0].is_capital()))
+}
+
+fn (mut p Parser) resolve_at_expr(expr ast.AtExpr) !string {
+	match expr.kind {
+		.mod_name {
+			return p.mod
+		}
+		.os {
+			return pref.get_host_os().lower()
+		}
+		.ccompiler {
+			return p.pref.ccompiler_type.str()
+		}
+		.backend {
+			return p.pref.backend.str()
+		}
+		.platform {
+			return p.pref.arch.str()
+		}
+		else {
+			return error('top level comptime only support `@MOD` `@OS` `@CCOMPILER` `@BACKEND` or `@PLATFORM`')
+		}
+	}
+
+	return ''
+}
+
+enum MatchCondOrBlockMode {
+	unsupported
+	no_err_var
+	with_err_var
+	already_set
+}
+
+fn (p &Parser) match_cond_or_block_mode(cond ast.Expr) MatchCondOrBlockMode {
+	return match cond {
+		ast.CallExpr {
+			if cond.or_block.kind == ast.OrKind.absent {
+				MatchCondOrBlockMode.with_err_var
+			} else {
+				MatchCondOrBlockMode.already_set
+			}
+		}
+		ast.Ident {
+			if cond.or_expr.kind == ast.OrKind.absent {
+				MatchCondOrBlockMode.no_err_var
+			} else {
+				MatchCondOrBlockMode.already_set
+			}
+		}
+		ast.IndexExpr {
+			if cond.or_expr.kind == ast.OrKind.absent {
+				MatchCondOrBlockMode.no_err_var
+			} else {
+				MatchCondOrBlockMode.already_set
+			}
+		}
+		ast.ParExpr {
+			p.match_cond_or_block_mode(cond.expr)
+		}
+		ast.PrefixExpr {
+			if cond.op == .arrow {
+				if cond.or_block.kind == ast.OrKind.absent {
+					MatchCondOrBlockMode.with_err_var
+				} else {
+					MatchCondOrBlockMode.already_set
+				}
+			} else {
+				MatchCondOrBlockMode.unsupported
+			}
+		}
+		ast.SelectorExpr {
+			if cond.or_block.kind == ast.OrKind.absent {
+				MatchCondOrBlockMode.with_err_var
+			} else {
+				MatchCondOrBlockMode.already_set
+			}
+		}
+		else {
+			MatchCondOrBlockMode.unsupported
+		}
+	}
+}
+
+fn (mut p Parser) set_match_cond_or_block(mut cond ast.Expr, or_expr ast.OrExpr) {
+	match mut cond {
+		ast.CallExpr {
+			cond.or_block = or_expr
+		}
+		ast.Ident {
+			cond.or_expr = or_expr
+		}
+		ast.IndexExpr {
+			cond.or_expr = or_expr
+		}
+		ast.ParExpr {
+			p.set_match_cond_or_block(mut cond.expr, or_expr)
+		}
+		ast.PrefixExpr {
+			cond.or_block = or_expr
+		}
+		ast.SelectorExpr {
+			cond.or_block = or_expr
+		}
+		else {}
+	}
+}
+
+fn (mut p Parser) match_expr(is_comptime bool, is_expr bool) ast.MatchExpr {
+	mut match_first_pos := p.tok.pos()
+	old_inside_ct_match := p.inside_ct_match
+	is_expr_ := p.prev_tok.kind == .key_return || is_expr
+	if is_comptime {
+		p.next() // `$`
+		match_first_pos = p.prev_tok.pos().extend(p.tok.pos())
+		p.inside_ct_match = true
+	}
+	old_inside_match := p.inside_match
 	p.inside_match = true
 	p.check(.key_match)
 	mut is_sum_type := false
-	cond := p.expr(0)
-	p.inside_match = false
+	mut cond := p.expr(0)
+	mut cond_str := ''
+	if is_comptime && cond is ast.AtExpr && p.is_in_top_level_comptime(p.inside_assign_rhs) {
+		cond_str = p.resolve_at_expr(cond as ast.AtExpr) or {
+			p.error(err.msg())
+			return ast.MatchExpr{}
+		}
+	}
+	p.inside_match = old_inside_match
+	p.inside_ct_match = old_inside_ct_match
 	no_lcbr := p.tok.kind != .lcbr
 	if !no_lcbr {
 		p.check(.lcbr)
 	}
 	comments := p.eat_comments() // comments before the first branch
 	mut branches := []ast.MatchBranch{}
+	mut comptime_skip_curr_stmts := false
+	mut comptime_has_true_branch := false
 	for p.tok.kind != .eof {
 		branch_first_pos := p.tok.pos()
 		mut exprs := []ast.Expr{}
 		mut ecmnts := [][]ast.Comment{}
-		p.open_scope()
 		// final else
 		mut is_else := false
+		if is_comptime {
+			if p.tok.kind == .key_else {
+				p.error('use `\$else` instead of `else` in compile-time `match` branches')
+				return ast.MatchExpr{}
+			}
+			if p.tok.kind != .rcbr && p.peek_tok.kind == .key_else {
+				p.check(.dollar)
+			}
+		}
 		if p.tok.kind == .key_else {
 			is_else = true
-			else_count += 1
 			p.next()
-		} else if (p.tok.kind == .name && !(p.tok.lit == 'C' && p.peek_tok.kind == .dot)
-			&& (((ast.builtin_type_names_matcher.matches(p.tok.lit) || p.tok.lit[0].is_capital())
-			&& p.peek_tok.kind != .lpar) || (p.peek_tok.kind == .dot && p.peek_token(2).lit.len > 0
-			&& p.peek_token(2).lit[0].is_capital()))) || p.is_only_array_type()
+		} else if p.is_match_sumtype_type() || p.is_only_array_type()
 			|| p.tok.kind == .key_fn
 			|| (p.tok.kind == .lsbr && p.peek_token(2).kind == .amp) {
 			mut types := []ast.Type{}
 			for {
 				// Sum type match
 				parsed_type := p.parse_type()
-				ecmnts << p.eat_comments()
 				types << parsed_type
 				exprs << ast.TypeNode{
 					typ: parsed_type
 					pos: p.prev_tok.pos()
 				}
 				if p.tok.kind != .comma {
+					ecmnts << p.eat_comments()
 					break
 				}
 				p.check(.comma)
@@ -263,37 +460,70 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 					for p.tok.kind == .comma {
 						p.next()
 					}
+					ecmnts << p.eat_comments()
 				}
 			}
 			is_sum_type = true
 		} else {
+			if p.tok.kind == .rcbr {
+				p.next()
+				return ast.MatchExpr{
+					pos: match_first_pos
+				}
+			}
 			// Expression match
 			for {
+				if is_comptime {
+					p.inside_ct_match_case = true
+				}
 				p.inside_match_case = true
 				mut range_pos := p.tok.pos()
-				expr := p.expr(0)
-				ecmnts << p.eat_comments()
+				mut case_str := ''
+				mut expr := p.expr(0)
 				p.inside_match_case = false
+				p.inside_ct_match_case = false
+				match mut expr {
+					ast.StringLiteral {
+						case_str = expr.val
+					}
+					ast.IntegerLiteral {
+						case_str = expr.val.str()
+					}
+					ast.BoolLiteral {
+						case_str = expr.val.str()
+					}
+					else {}
+				}
+
+				comptime_skip_curr_stmts = cond_str != case_str
+				if !comptime_skip_curr_stmts {
+					comptime_has_true_branch = true
+				}
 				if p.tok.kind == .dotdot {
 					p.error_with_pos('match only supports inclusive (`...`) ranges, not exclusive (`..`)',
 						p.tok.pos())
 					return ast.MatchExpr{}
 				} else if p.tok.kind == .ellipsis {
 					p.next()
+					if is_comptime {
+						p.inside_ct_match_case = true
+					}
 					p.inside_match_case = true
 					expr2 := p.expr(0)
 					p.inside_match_case = false
+					p.inside_ct_match_case = false
 					exprs << ast.RangeExpr{
-						low: expr
-						high: expr2
-						has_low: true
+						low:      expr
+						high:     expr2
+						has_low:  true
 						has_high: true
-						pos: range_pos.extend(p.prev_tok.pos())
+						pos:      range_pos.extend(p.prev_tok.pos())
 					}
 				} else {
 					exprs << expr
 				}
 				if p.tok.kind != .comma {
+					ecmnts << p.eat_comments()
 					break
 				}
 
@@ -305,57 +535,93 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 					for p.tok.kind == .comma {
 						p.next()
 					}
+					ecmnts << p.eat_comments()
 				}
 			}
 		}
 		branch_last_pos := p.prev_tok.pos()
 		// p.warn('match block')
+		if is_comptime {
+			p.inside_ct_match_body = true
+		}
 		p.inside_match_body = true
-		stmts := p.parse_block_no_scope(false)
+		p.open_scope()
+		mut stmts := []ast.Stmt{}
+		if is_comptime && ((!is_else && comptime_skip_curr_stmts)
+			|| (is_else && comptime_has_true_branch))
+			&& p.is_in_top_level_comptime(p.inside_assign_rhs) && !p.pref.is_fmt
+			&& !p.pref.output_cross_c {
+			p.skip_scope()
+		} else {
+			stmts = p.parse_block_no_scope(false)
+		}
 		branch_scope := p.scope
 		p.close_scope()
 		p.inside_match_body = false
+		p.inside_ct_match_body = false
 		pos := branch_first_pos.extend_with_last_line(branch_last_pos, p.prev_tok.line_nr)
 		branch_pos := branch_first_pos.extend_with_last_line(p.tok.pos(), p.tok.line_nr)
 		post_comments := p.eat_comments()
 		branches << ast.MatchBranch{
-			exprs: exprs
-			ecmnts: ecmnts
-			stmts: stmts
-			pos: pos
-			branch_pos: branch_pos
-			is_else: is_else
+			exprs:         exprs
+			ecmnts:        ecmnts
+			stmts:         stmts
+			pos:           pos
+			branch_pos:    branch_pos
+			is_else:       is_else
 			post_comments: post_comments
-			scope: branch_scope
-		}
-		if is_else && branches.len == 1 {
-			p.error_with_pos('`match` must have at least one non `else` branch', pos)
-		}
-		if else_count > 1 {
-			p.error_with_pos('`match` can have only one `else` branch', pos)
+			scope:         branch_scope
 		}
 		if p.tok.kind == .rcbr || (is_else && no_lcbr) {
 			break
 		}
 	}
-	match_last_pos := p.tok.pos()
-	mut pos := token.Pos{
-		line_nr: match_first_pos.line_nr
-		pos: match_first_pos.pos
-		len: match_last_pos.pos - match_first_pos.pos + match_last_pos.len
-		col: match_first_pos.col
-	}
+	mut match_last_pos := p.tok.pos()
 	if p.tok.kind == .rcbr {
 		p.check(.rcbr)
+		match_last_pos = p.prev_tok.pos()
+	}
+	if p.tok.kind == .key_orelse {
+		cond_or_mode := p.match_cond_or_block_mode(cond)
+		if cond_or_mode == .already_set {
+			p.error_with_pos('match condition already has an `or {}` block', p.tok.pos())
+			return ast.MatchExpr{}
+		}
+		if cond_or_mode == .unsupported {
+			p.error_with_pos('trailing `or {}` is only supported for match conditions that can use `or {}` directly',
+				p.tok.pos())
+			return ast.MatchExpr{}
+		}
+		err_var_mode := if cond_or_mode == .with_err_var {
+			OrBlockErrVarMode.with_err_var
+		} else {
+			OrBlockErrVarMode.no_err_var
+		}
+		or_stmts, or_pos, or_scope := p.or_block(err_var_mode)
+		p.set_match_cond_or_block(mut cond, ast.OrExpr{
+			kind:  .block
+			stmts: or_stmts
+			pos:   or_pos
+			scope: or_scope
+		})
+		match_last_pos = p.prev_tok.pos()
 	}
 	// return ast.StructInit{}
-	pos.update_last_line(p.prev_tok.line_nr)
+	mut pos := token.Pos{
+		line_nr: match_first_pos.line_nr
+		pos:     match_first_pos.pos
+		len:     match_last_pos.pos - match_first_pos.pos + match_last_pos.len
+		col:     match_first_pos.col
+	}
+	pos.update_last_line(match_last_pos.line_nr)
 	return ast.MatchExpr{
-		branches: branches
-		cond: cond
+		is_comptime: is_comptime
+		is_expr:     is_expr_
+		branches:    branches
+		cond:        cond
 		is_sum_type: is_sum_type
-		pos: pos
-		comments: comments
+		pos:         pos
+		comments:    comments
 	}
 }
 
@@ -384,8 +650,7 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 				return ast.SelectExpr{}
 			}
 			if has_else {
-				p.error_with_pos('at most one `else` branch allowed in `select` block',
-					p.tok.pos())
+				p.error_with_pos('at most one `else` branch allowed in `select` block', p.tok.pos())
 				return ast.SelectExpr{}
 			}
 			is_else = true
@@ -401,19 +666,19 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 			}
 			p.inside_match = true
 			p.inside_select = true
-			exprs, comments := p.expr_list()
+			exprs := p.expr_list(true)
 			if exprs.len != 1 {
 				p.error('only one expression allowed as `select` key')
 				return ast.SelectExpr{}
 			}
 			if p.tok.kind in [.assign, .decl_assign] {
-				stmt = p.partial_assign_stmt(exprs, comments)
+				stmt = p.partial_assign_stmt(exprs)
 			} else {
 				stmt = ast.ExprStmt{
-					expr: exprs[0]
-					pos: exprs[0].pos()
+					expr:     exprs[0]
+					pos:      exprs[0].pos()
 					comments: [comment]
-					is_expr: true
+					is_expr:  true
 				}
 			}
 			p.inside_match = false
@@ -459,8 +724,7 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 					match expr {
 						ast.PrefixExpr {
 							if expr.op != .arrow {
-								p.error_with_pos('select key: `<-` operator expected',
-									expr.pos)
+								p.error_with_pos('select key: `<-` operator expected', expr.pos)
 								return ast.SelectExpr{}
 							}
 						}
@@ -482,13 +746,14 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 		p.inside_match_body = true
 		p.inside_for = false
 		stmts := p.parse_block_no_scope(false)
+		branch_scope := p.scope
 		p.close_scope()
 		p.inside_match_body = false
 		mut pos := token.Pos{
 			line_nr: branch_first_pos.line_nr
-			pos: branch_first_pos.pos
-			len: branch_last_pos.pos - branch_first_pos.pos + branch_last_pos.len
-			col: branch_first_pos.col
+			pos:     branch_first_pos.pos
+			len:     branch_last_pos.pos - branch_first_pos.pos + branch_last_pos.len
+			col:     branch_first_pos.col
 		}
 		post_comments := p.eat_comments()
 		pos.update_last_line(p.prev_tok.line_nr)
@@ -496,12 +761,13 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 			pos.last_line = post_comments.last().pos.last_line
 		}
 		branches << ast.SelectBranch{
-			stmt: stmt
-			stmts: stmts
-			pos: pos
-			comment: comment
-			is_else: is_else
-			is_timeout: is_timeout
+			stmt:          stmt
+			stmts:         stmts
+			pos:           pos
+			scope:         branch_scope
+			comment:       comment
+			is_else:       is_else
+			is_timeout:    is_timeout
 			post_comments: post_comments
 		}
 		if p.tok.kind == .rcbr || ((is_else || is_timeout) && no_lcbr) {
@@ -511,16 +777,204 @@ fn (mut p Parser) select_expr() ast.SelectExpr {
 	match_last_pos := p.tok.pos()
 	pos := token.Pos{
 		line_nr: match_first_pos.line_nr
-		pos: match_first_pos.pos
-		len: match_last_pos.pos - match_first_pos.pos + match_last_pos.len
-		col: match_first_pos.col
+		pos:     match_first_pos.pos
+		len:     match_last_pos.pos - match_first_pos.pos + match_last_pos.len
+		col:     match_first_pos.col
 	}
 	if p.tok.kind == .rcbr {
 		p.check(.rcbr)
 	}
+	p.register_auto_import('sync')
 	return ast.SelectExpr{
-		branches: branches
-		pos: pos.extend_with_last_line(p.prev_tok.pos(), p.prev_tok.line_nr)
+		branches:      branches
+		pos:           pos.extend_with_last_line(p.prev_tok.pos(), p.prev_tok.line_nr)
 		has_exception: has_else || has_timeout
 	}
+}
+
+fn (mut p Parser) comptime_if_cond(mut cond ast.Expr) bool {
+	mut is_true := false
+	match mut cond {
+		ast.BoolLiteral {
+			return cond.val
+		}
+		ast.ParExpr {
+			return p.comptime_if_cond(mut cond.expr)
+		}
+		ast.PrefixExpr {
+			if cond.op != .not {
+				p.error('invalid \$if prefix operator, only allow `!`.')
+				return false
+			}
+			return !p.comptime_if_cond(mut cond.right)
+		}
+		ast.PostfixExpr {
+			if cond.op != .question {
+				p.error('invalid \$if postfix operator, only allow `?`.')
+				return false
+			}
+			if cond.expr !is ast.Ident {
+				p.error('invalid \$if postfix condition, only allow `Indent`.')
+				return false
+			}
+			cname := (cond.expr as ast.Ident).name
+			return cname in p.pref.compile_defines
+		}
+		ast.InfixExpr {
+			match cond.op {
+				.and, .logical_or {
+					l := p.comptime_if_cond(mut cond.left)
+					r := p.comptime_if_cond(mut cond.right)
+					// if at least one of the cond has `keep_stmts`, we should keep stmts
+					return if cond.op == .and { l && r } else { l || r }
+				}
+				.eq, .ne, .gt, .lt, .ge, .le {
+					match mut cond.left {
+						ast.AtExpr {
+							// @OS == 'linux'
+							left_str := p.resolve_at_expr(cond.left) or {
+								p.error(err.msg())
+								return false
+							}
+							if cond.right !is ast.StringLiteral {
+								p.error('`${cond.left} can only compare with string type')
+								return false
+							}
+							right_str := (cond.right as ast.StringLiteral).val
+							if cond.op == .eq {
+								is_true = left_str == right_str
+							} else if cond.op == .ne {
+								is_true = left_str != right_str
+							} else {
+								p.error('string type only support `==` and `!=` operator')
+								return false
+							}
+							return is_true
+						}
+						ast.Ident {
+							// $if version == 2
+							match mut cond.right {
+								ast.StringLiteral {
+									match cond.op {
+										.eq {
+											is_true = cond.left.str() == cond.right.str()
+										}
+										.ne {
+											is_true = cond.left.str() != cond.right.str()
+										}
+										else {
+											p.error('string type only support `==` and `!=` operator')
+											return false
+										}
+									}
+								}
+								ast.IntegerLiteral {
+									match cond.op {
+										.eq {
+											is_true = cond.left.str().i64() == cond.right.val.i64()
+										}
+										.ne {
+											is_true = cond.left.str().i64() != cond.right.val.i64()
+										}
+										.gt {
+											is_true = cond.left.str().i64() > cond.right.val.i64()
+										}
+										.lt {
+											is_true = cond.left.str().i64() < cond.right.val.i64()
+										}
+										.ge {
+											is_true = cond.left.str().i64() >= cond.right.val.i64()
+										}
+										.le {
+											is_true = cond.left.str().i64() <= cond.right.val.i64()
+										}
+										else {
+											p.error('int type only support `==` `!=` `>` `<` `>=` and `<=` operator')
+											return false
+										}
+									}
+								}
+								ast.BoolLiteral {
+									match cond.op {
+										.eq {
+											is_true = cond.left.str().bool() == cond.right.val
+										}
+										.ne {
+											is_true = cond.left.str().bool() != cond.right.val
+										}
+										else {
+											p.error('bool type only support `==` and `!=` operator')
+											return false
+										}
+									}
+								}
+								else {
+									p.error('compare only support string int and bool type')
+									return false
+								}
+							}
+
+							return is_true
+						}
+						else {
+							p.error('invalid \$if condition')
+							return false
+						}
+					}
+
+					p.error('invalid \$if condition')
+					return false
+				}
+				else {
+					p.error('invalid \$if operator: ${cond.op}')
+					return false
+				}
+			}
+		}
+		ast.Ident {
+			cname := cond.name
+			if cname in ast.valid_comptime_not_user_defined {
+				if cname == 'threads' {
+					is_true = p.table.gostmts > 0
+				} else {
+					is_true = ast.eval_comptime_not_user_defined_ident(cname, p.pref) or {
+						p.error(err.msg())
+						return false
+					}
+				}
+			} else {
+				p.error('invalid \$if condition: unknown indent `${cname}`')
+				return false
+			}
+			return is_true
+		}
+		ast.ComptimeCall {
+			if cond.kind == .pkgconfig {
+				if mut m := pkgconfig.main([cond.args_var]) {
+					if _ := m.run() {
+						is_true = true
+					} else {
+						// pkgconfig not found, do not issue error, just set false
+						is_true = false
+					}
+				} else {
+					p.error(err.msg())
+					is_true = false
+				}
+				return is_true
+			}
+			if cond.kind == .d {
+				is_true = cond.compile_value.bool()
+				return is_true
+			}
+			p.error('invalid \$if condition: unknown ComptimeCall')
+			return false
+		}
+		else {
+			p.error('invalid \$if condition ${cond}')
+			return false
+		}
+	}
+
+	return is_true
 }

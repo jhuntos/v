@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module cflag
@@ -22,28 +22,45 @@ pub fn (c &CFlag) str() string {
 }
 
 const fexisting_literal = r'$first_existing'
+const wexisting_literal = r'$when_first_existing'
+
+fn find_first_existing_path(remainder string, literal string) (bool, string, int, []string) {
+	sparams := remainder[literal.len + 1..].all_before(')')
+	delta_i := sparams.len + literal.len + 1
+	svalues := sparams.replace(',', '\n').split_into_lines().map(it.trim('\t \'"'))
+	for spath in svalues {
+		if os.exists(spath) {
+			return true, spath, delta_i, []string{}
+		}
+	}
+	return false, '', delta_i, svalues
+}
 
 // expand the flag value
-pub fn (cf &CFlag) eval() string {
+pub fn (cf &CFlag) eval() ?string {
 	mut value_builder := strings.new_builder(10 * cf.value.len)
 	cflag_eval_outer_loop: for i := 0; i < cf.value.len; i++ {
 		x := cf.value[i]
 		if x == `$` {
 			remainder := cf.value[i..]
-			if remainder.starts_with(cflag.fexisting_literal) {
-				sparams := remainder[cflag.fexisting_literal.len + 1..].all_before(')')
-				i += sparams.len + cflag.fexisting_literal.len + 1
-				svalues := sparams.replace(',', '\n').split_into_lines().map(it.trim(' \'"'))
-				// mut found_spath := ''
-				for spath in svalues {
-					if os.exists(spath) {
-						// found_spath = spath
-						value_builder.write_string(spath)
-						continue cflag_eval_outer_loop
-					}
+			if remainder.starts_with(fexisting_literal) {
+				found, spath, delta_i, svalues := find_first_existing_path(remainder,
+					fexisting_literal)
+				if found {
+					value_builder.write_string(spath)
+					i += delta_i
+					continue
 				}
 				panic('>> error: none of the paths ${svalues} exist')
-				continue
+			}
+			if remainder.starts_with(wexisting_literal) {
+				found, spath, delta_i, _ := find_first_existing_path(remainder, wexisting_literal)
+				if found {
+					value_builder.write_string(spath)
+					i += delta_i
+					continue
+				}
+				return none
 			}
 		}
 		value_builder.write_string(x.ascii_str())
@@ -52,19 +69,22 @@ pub fn (cf &CFlag) eval() string {
 }
 
 // format flag
-pub fn (cf &CFlag) format() string {
+pub fn (cf &CFlag) format() ?string {
 	mut value := ''
 	if cf.cached != '' {
 		value = cf.cached
 	} else {
-		value = cf.eval()
+		value = cf.eval()?
 	}
-	if cf.name in ['-l', '-Wa', '-Wl', '-Wp'] && value.len > 0 {
+	if cf.name in ['-l', '-Wa', '-Wl', '-Wp'] && value != '' {
 		return '${cf.name}${value}'.trim_space()
 	}
 	// convert to absolute path
 	if cf.name == '-I' || cf.name == '-L' || value.ends_with('.o') {
 		value = '"' + os.real_path(value) + '"'
+		if cf.name in ['-I', '-L'] {
+			return '${cf.name}${value}'.trim_space()
+		}
 	}
 	return '${cf.name} ${value}'.trim_space()
 }
@@ -83,7 +103,7 @@ pub fn (cflags []CFlag) c_options_before_target() []string {
 	mut args := []string{cap: defines.len + others.len}
 	args << defines
 	args << others
-	return args
+	return uniq_non_empty(args)
 }
 
 pub fn (cflags []CFlag) c_options_after_target() []string {
@@ -97,19 +117,21 @@ pub fn (cflags []CFlag) c_options_without_object_files() []string {
 		if flag.value.ends_with('.o') || flag.value.ends_with('.obj') {
 			continue
 		}
-		args << flag.format()
+		args << flag.format() or { continue }
 	}
-	return args
+	return uniq_non_empty(args)
 }
 
 pub fn (cflags []CFlag) c_options_only_object_files() []string {
 	mut args := []string{}
 	for flag in cflags {
-		if flag.value.ends_with('.o') || flag.value.ends_with('.obj') {
-			args << flag.format()
+		// TODO figure out a better way to copy cross compiling flags to the linker
+		if flag.value.ends_with('.o') || flag.value.ends_with('.obj')
+			|| (flag.name == '-l' && flag.value == 'pq') {
+			args << flag.format() or { continue }
 		}
 	}
-	return args
+	return uniq_non_empty(args)
 }
 
 pub fn (cflags []CFlag) defines_others_libs() ([]string, []string, []string) {
@@ -118,19 +140,104 @@ pub fn (cflags []CFlag) defines_others_libs() ([]string, []string, []string) {
 	mut others := []string{}
 	mut libs := []string{}
 	for copt in copts_without_obj_files {
+		if copt.ends_with('@START_LIBS') {
+			libs.insert(0, copt.all_before('@START_LIBS'))
+			continue
+		}
 		if copt.starts_with('-l') {
 			libs << copt
 			continue
 		}
-		if copt.ends_with('.a') {
+		if copt.ends_with('.a') || copt.ends_with('.so') || copt.ends_with('.dylib')
+			|| copt.ends_with('.dll') || copt.ends_with('.lib') {
+			windows_import_libs := split_bare_windows_import_libs(copt)
+			if windows_import_libs.len > 0 {
+				libs << windows_import_libs.map(windows_import_lib_to_link_flag(it))
+				continue
+			}
+			if is_bare_windows_import_lib(copt) {
+				libs << windows_import_lib_to_link_flag(copt)
+				continue
+			}
 			libs << '"${copt}"'
+			continue
+		}
+
+		if copt.ends_with('@START_DEFINES') {
+			defines.insert(0, copt.all_before('@START_DEFINES'))
 			continue
 		}
 		if copt.starts_with('-D') {
 			defines << copt
 			continue
 		}
+
+		if copt.ends_with('@START_OTHERS') {
+			others.insert(0, copt.all_before('@START_OTHERS'))
+			continue
+		}
 		others << copt
 	}
-	return defines, others, libs
+	return uniq_non_empty(defines), uniq_non_empty(others), uniq_non_empty(libs)
+}
+
+fn split_bare_windows_import_libs(value string) []string {
+	parts := split_quoted_flags(value)
+	if parts.len < 2 {
+		return []string{}
+	}
+	for part in parts {
+		if !is_bare_windows_import_lib(part) {
+			return []string{}
+		}
+	}
+	return parts
+}
+
+fn is_bare_windows_import_lib(value string) bool {
+	lib := value.trim_space()
+	return lib.len > '.lib'.len && lib.to_lower().ends_with('.lib') && !lib.contains('/')
+		&& !lib.contains('\\') && !lib.contains(':') && !lib.contains(' ') && !lib.contains('\t')
+}
+
+fn windows_import_lib_to_link_flag(value string) string {
+	lib := value.trim_space()
+	return '-l${lib[..lib.len - '.lib'.len]}'
+}
+
+fn split_quoted_flags(value string) []string {
+	mut parts := []string{}
+	mut buf := []u8{}
+	mut in_quote := false
+	for ch in value {
+		if ch == `"` {
+			in_quote = !in_quote
+			continue
+		}
+		if !in_quote && ch in [` `, `\t`] {
+			if buf.len > 0 {
+				parts << buf.bytestr()
+				buf = []u8{}
+			}
+			continue
+		}
+		buf << ch
+	}
+	if buf.len > 0 {
+		parts << buf.bytestr()
+	}
+	return parts
+}
+
+fn uniq_non_empty(args []string) []string {
+	mut uniq_args := []string{}
+	for a in args {
+		if a == '' {
+			continue
+		}
+		if a !in uniq_args {
+			uniq_args << a
+		}
+	}
+	return uniq_args
 }

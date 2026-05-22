@@ -3,13 +3,11 @@ import flag
 import scripting
 import vgit
 
-const (
-	tool_version     = '0.0.6'
-	tool_description = "  Compares V executable size and performance,
+const tool_version = '0.0.6'
+const tool_description = "  Compares V executable size and performance,
 |  between 2 commits from V's local git history.
 |  When only one commit is given, it is compared to master.
 |  ".strip_margin()
-)
 
 struct Context {
 	cwd string // current working folder
@@ -27,9 +25,9 @@ mut:
 
 fn new_context() Context {
 	return Context{
-		cwd: os.getwd()
+		cwd:          os.getwd()
 		commit_after: 'master'
-		warmups: 4
+		warmups:      4
 	}
 }
 
@@ -82,12 +80,12 @@ fn (c &Context) prepare_v(cdir string, commit string) {
 		cc = 'cc'
 	}
 	mut vgit_context := vgit.VGitContext{
-		cc: cc
-		commit_v: commit
-		path_v: cdir
-		path_vc: c.vc
-		workdir: c.vgo.workdir
-		v_repo_url: c.vgo.v_repo_url
+		cc:          cc
+		commit_v:    commit
+		path_v:      cdir
+		path_vc:     c.vc
+		workdir:     c.vgo.workdir
+		v_repo_url:  c.vgo.v_repo_url
 		vc_repo_url: c.vgo.vc_repo_url
 	}
 	vgit_context.compile_oldv_if_needed()
@@ -146,8 +144,10 @@ fn (c Context) compare_v_performance(label string, commands []string) string {
 	} else {
 		source_location_b = if os.exists('${c.b}/v.v') { 'v.v       ' } else { 'compiler/ ' }
 	}
-	timestamp_a, _ := vgit.line_to_timestamp_and_commit(scripting.run('cd ${c.a}/ ; git rev-list -n1 --timestamp HEAD'))
-	timestamp_b, _ := vgit.line_to_timestamp_and_commit(scripting.run('cd ${c.b}/ ; git rev-list -n1 --timestamp HEAD'))
+	timestamp_a, _ :=
+		vgit.line_to_timestamp_and_commit(scripting.run('cd ${c.a}/ ; git rev-list -n1 --timestamp HEAD'))
+	timestamp_b, _ :=
+		vgit.line_to_timestamp_and_commit(scripting.run('cd ${c.b}/ ; git rev-list -n1 --timestamp HEAD'))
 	// 1570877641 is 065ce39 2019-10-12
 	debug_option_a := if timestamp_a > 1570877641 { '-cg    ' } else { '-debug ' }
 	debug_option_b := if timestamp_b > 1570877641 { '-cg    ' } else { '-debug ' }
@@ -172,7 +172,8 @@ fn (c Context) compare_v_performance(label string, commands []string) string {
 		])
 	}
 	// /////////////////////////////////////////////////////////////////////////////
-	cmd_stats_file := os.real_path([c.vgo.workdir, 'v_performance_stats_${label}.json'].join(os.path_separator))
+	cmd_stats_file :=
+		os.real_path([c.vgo.workdir, 'v_performance_stats_${label}.json'].join(os.path_separator))
 	comparison_cmd := 'hyperfine ${c.hyperfineopts} ' + '--export-json ${cmd_stats_file} ' +
 		'--time-unit millisecond ' + '--style full --warmup ${c.warmups} ' +
 		hyperfine_commands_arguments.join(' ')
@@ -199,7 +200,8 @@ fn main() {
 	fp.arguments_description('COMMIT_BEFORE [COMMIT_AFTER]')
 	fp.skip_executable()
 	fp.limit_free_args(1, 2)!
-	context.vflags = fp.string('vflags', 0, '', 'Additional options to pass to the v commands, for example "-cc tcc"')
+	context.vflags = fp.string('vflags', 0, '',
+		'Additional options to pass to the v commands, for example "-cc tcc"')
 	context.hyperfineopts = fp.string('hyperfine_options', 0, '', 'Additional options passed to hyperfine.
 ${flag.space}For example on linux, you may want to pass:
 ${flag.space}--hyperfine_options "--prepare \'sync; echo 3 | sudo tee /proc/sys/vm/drop_caches\'"

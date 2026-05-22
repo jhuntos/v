@@ -1,3 +1,4 @@
+// vtest build: started_postgres?
 module main
 
 import orm
@@ -5,110 +6,132 @@ import db.pg
 import time
 
 struct TestCustomSqlType {
-	id      int    [primary; sql: serial]
-	custom  string [sql_type: 'TEXT']
-	custom1 string [sql_type: 'VARCHAR(191)']
-	custom2 string [sql_type: 'TIMESTAMP']
-	custom3 string [sql_type: 'uuid']
+	id      int    @[primary; sql: serial]
+	custom  string @[sql_type: 'TEXT']
+	custom1 string @[sql_type: 'VARCHAR(191)']
+	custom2 string @[sql_type: 'TIMESTAMP']
+	custom3 string @[sql_type: 'uuid']
 }
 
 struct TestCustomWrongSqlType {
-	id      int    [primary; sql: serial]
+	id      int @[primary; sql: serial]
 	custom  string
-	custom1 string [sql_type: 'VARCHAR']
-	custom2 string [sql_type: 'money']
-	custom3 string [sql_type: 'xml']
+	custom1 string @[sql_type: 'VARCHAR']
+	custom2 string @[sql_type: 'money']
+	custom3 string @[sql_type: 'xml']
 }
 
 struct TestTimeType {
 mut:
-	id         int       [primary; sql: serial]
+	id         int @[primary; sql: serial]
 	username   string
-	created_at time.Time [sql_type: 'TIMESTAMP']
-	updated_at string    [sql_type: 'TIMESTAMP']
+	created_at time.Time @[sql_type: 'TIMESTAMP']
+	updated_at string    @[sql_type: 'TIMESTAMP']
 	deleted_at time.Time
 }
 
-struct TestDefaultAtribute {
-	id         string [default: 'gen_random_uuid()'; primary; sql_type: 'uuid']
+struct TestDefaultAttribute {
+	id         string @[default: 'gen_random_uuid()'; primary; sql_type: 'uuid']
 	name       string
-	created_at string [default: 'CURRENT_TIMESTAMP'; sql_type: 'TIMESTAMP']
+	created_at string @[default: 'CURRENT_TIMESTAMP'; sql_type: 'TIMESTAMP']
+}
+
+struct TestInsertDefaultValues {
+	id      int    @[primary; sql: serial]
+	example string @[default: '']
+}
+
+@[comment: 'This is a table comment']
+struct TestCommentAttribute {
+	id         string @[primary; sql: serial]
+	name       string @[comment: 'real user name']
+	created_at string @[default: 'CURRENT_TIMESTAMP'; sql_type: 'TIMESTAMP']
 }
 
 fn test_pg_orm() {
+	$if !network ? {
+		eprintln('> Skipping test ${@FN}, since `-d network` is not passed.')
+		eprintln('> This test requires a working postgres server running on localhost.')
+		return
+	}
 	mut db := pg.connect(
-		host: 'localhost'
-		user: 'postgres'
-		password: 'password'
-		dbname: 'postgres'
+		host:     'localhost'
+		user:     'postgres'
+		password: '12345678'
+		dbname:   'postgres'
 	) or { panic(err) }
 
 	defer {
-		db.close()
+		db.close() or {}
 	}
+	db.exec('create extension if not exists pgcrypto') or { panic(err) }
+	table := orm.Table{
+		name: 'Test'
+	}
+	db.drop(table) or {}
 
-	db.create('Test', [
+	db.create(table, [
 		orm.TableField{
 			name: 'id'
-			typ: typeof[string]().idx
-			is_time: false
+			typ:  typeof[string]().idx
+			//			is_time: false
 			default_val: ''
-			is_arr: false
-			attrs: [
-				StructAttribute{
-					name: 'primary'
+			is_arr:      false
+			attrs:       [
+				VAttribute{
+					name:    'primary'
 					has_arg: false
-					arg: ''
-					kind: .plain
+					arg:     ''
+					kind:    .plain
 				},
-				StructAttribute{
-					name: 'sql'
+				VAttribute{
+					name:    'sql'
 					has_arg: true
-					arg: 'serial'
-					kind: .plain
+					arg:     'serial'
+					kind:    .plain
 				},
 			]
 		},
 		orm.TableField{
 			name: 'name'
-			typ: typeof[string]().idx
-			is_time: false
+			typ:  typeof[string]().idx
+			//			is_time: false
 			default_val: ''
-			is_arr: false
-			attrs: []
+			is_arr:      false
+			attrs:       []
 		},
 		orm.TableField{
 			name: 'age'
-			typ: typeof[i64]().idx
-			is_time: false
+			typ:  typeof[i64]().idx
+			//			is_time: false
 			default_val: ''
-			is_arr: false
-			attrs: []
+			is_arr:      false
+			attrs:       []
 		},
 	]) or { panic(err) }
 
-	db.insert('Test', orm.QueryData{
+	db.insert(table, orm.QueryData{
 		fields: ['name', 'age']
-		data: [orm.string_to_primitive('Louis'), orm.int_to_primitive(101)]
+		data:   [orm.string_to_primitive('Louis'), orm.int_to_primitive(101)]
 	}) or { panic(err) }
 
-	res := db.@select(orm.SelectConfig{
-		table: 'Test'
-		is_count: false
-		has_where: true
-		has_order: false
-		order: ''
-		order_type: .asc
-		has_limit: false
-		primary: 'id'
-		has_offset: false
-		fields: ['id', 'name', 'age']
-		types: [typeof[int]().idx, typeof[string]().idx, typeof[i64]().idx]
+	res := db.select(orm.SelectConfig{
+		table:          table
+		aggregate_kind: .none
+		has_where:      true
+		has_order:      false
+		order:          ''
+		order_type:     .asc
+		has_limit:      false
+		primary:        'id'
+		has_offset:     false
+		fields:         ['id', 'name', 'age']
+		types:          [typeof[int]().idx, typeof[string]().idx, typeof[i64]().idx]
 	}, orm.QueryData{}, orm.QueryData{
 		fields: ['name', 'age']
-		data: [orm.Primitive('Louis'), orm.Primitive(101)]
-		types: []
-		kinds: [.eq, .eq]
+		data:   [orm.Primitive('Louis'), orm.Primitive(101)]
+		types:  []
+		kinds:  [.eq, .eq]
 		is_and: [true]
 	}) or { panic(err) }
 
@@ -134,6 +157,9 @@ fn test_pg_orm() {
 	/** test orm sql type
 	* - verify if all type create by attribute sql_type has created
 	*/
+	sql db {
+		drop table TestCustomSqlType
+	} or {}
 
 	sql db {
 		create table TestCustomSqlType
@@ -142,7 +168,7 @@ fn test_pg_orm() {
 	mut result_custom_sql := db.exec("
 		SELECT DATA_TYPE
 		FROM INFORMATION_SCHEMA.COLUMNS
-		WHERE TABLE_NAME = 'TestCustomSqlType'
+		WHERE TABLE_NAME = 'testcustomsqltype'
 		ORDER BY ORDINAL_POSITION
 	") or {
 		println(err)
@@ -151,13 +177,11 @@ fn test_pg_orm() {
 	mut information_schema_data_types_results := []string{}
 	information_schema_custom_sql := ['integer', 'text', 'character varying',
 		'timestamp without time zone', 'uuid']
-	for data_type in result_custom_sql {
-		information_schema_data_types_results << data_type.vals[0]
-	}
 
-	sql db {
-		drop table TestCustomSqlType
-	}!
+	for data_type in result_custom_sql {
+		x := data_type.vals[0]
+		information_schema_data_types_results << x?
+	}
 
 	assert information_schema_data_types_results == information_schema_custom_sql
 
@@ -172,7 +196,7 @@ fn test_pg_orm() {
 	}
 
 	model := TestTimeType{
-		username: 'hitalo'
+		username:   'hitalo'
 		created_at: today
 		updated_at: today.str()
 		deleted_at: today
@@ -202,13 +226,13 @@ fn test_pg_orm() {
 	/** test default attribute
 	*/
 	sql db {
-		create table TestDefaultAtribute
+		create table TestDefaultAttribute
 	}!
 
 	mut result_defaults := db.exec("
 		SELECT column_default
 		FROM INFORMATION_SCHEMA.COLUMNS
-		WHERE TABLE_NAME = 'TestDefaultAtribute'
+		WHERE TABLE_NAME = 'testdefaultattribute'
 		ORDER BY ORDINAL_POSITION
 	") or {
 		println(err)
@@ -217,10 +241,92 @@ fn test_pg_orm() {
 	mut information_schema_defaults_results := []string{}
 
 	for defaults in result_defaults {
-		information_schema_defaults_results << defaults.vals[0]
+		x := defaults.vals[0]
+		information_schema_defaults_results << x or { '' }
 	}
 	sql db {
-		drop table TestDefaultAtribute
+		drop table TestDefaultAttribute
 	}!
 	assert ['gen_random_uuid()', '', 'CURRENT_TIMESTAMP'] == information_schema_defaults_results
+
+	/** test inserting only default values
+	*/
+	sql db {
+		create table TestInsertDefaultValues
+	}!
+
+	model_default_values := TestInsertDefaultValues{
+		example: ''
+	}
+
+	sql db {
+		insert model_default_values into TestInsertDefaultValues
+	}!
+
+	inserted_default_values := sql db {
+		select from TestInsertDefaultValues
+	}!
+
+	sql db {
+		drop table TestInsertDefaultValues
+	}!
+
+	assert inserted_default_values.len == 1
+	assert inserted_default_values[0].example == ''
+
+	/** test comment attribute
+	*/
+	sql db {
+		create table TestCommentAttribute
+	}!
+
+	mut column_comments := db.exec("
+		SELECT 
+		a.attname AS column_name,
+		col_description(a.attrelid, a.attnum) AS column_comment
+		FROM pg_attribute a
+		JOIN pg_class c ON c.oid = a.attrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = 'testcommentattribute' 
+		AND n.nspname = 'public'
+		AND a.attnum > 0
+		AND NOT a.attisdropped
+		ORDER BY a.attnum
+	") or {
+		println(err)
+		panic(err)
+	}
+
+	mut table_comment := db.exec("
+		SELECT 
+		nspname AS schema_name,
+		relname AS table_name,
+		obj_description(pc.oid) AS table_comment
+		FROM pg_class pc
+		JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+		WHERE pc.relkind = 'r' AND pc.relname = 'testcommentattribute'
+		ORDER BY schema_name, table_name
+	") or {
+		println(err)
+		panic(err)
+	}
+
+	sql db {
+		drop table TestCommentAttribute
+	}!
+
+	mut information_schema_column_comment_results := []string{}
+
+	for comment in column_comments {
+		x := comment.vals[1]
+		information_schema_column_comment_results << x or { '' }
+	}
+	assert information_schema_column_comment_results == ['', 'real user name', '']
+
+	mut information_schema_table_comment_result := []string{}
+	for comment in table_comment {
+		x := comment.vals[2]
+		information_schema_table_comment_result << x or { '' }
+	}
+	assert information_schema_table_comment_result == ['This is a table comment']
 }

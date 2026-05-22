@@ -1,10 +1,10 @@
 module img
 
-import gx
+import gg
 import os
 import sim
 
-[params]
+@[params]
 pub struct ImageSettings {
 pub:
 	width      int = sim.default_width
@@ -20,14 +20,14 @@ pub fn new_image_settings(settings ImageSettings) ImageSettings {
 
 pub fn image_settings_from_grid(grid sim.GridSettings) ImageSettings {
 	return ImageSettings{
-		width: grid.width
+		width:  grid.width
 		height: grid.height
 	}
 }
 
 pub fn (s ImageSettings) to_grid_settings() sim.GridSettings {
 	return sim.GridSettings{
-		width: s.width
+		width:  s.width
 		height: s.height
 	}
 }
@@ -42,7 +42,7 @@ mut:
 pub fn ppm_writer_for_fname(fname string, settings ImageSettings) !&PPMWriter {
 	mut writer := &PPMWriter{
 		cache_size: settings.cache_size
-		cache: []u8{cap: settings.cache_size}
+		cache:      []u8{cap: settings.cache_size}
 	}
 	writer.start_for_file(fname, settings)!
 	return writer
@@ -53,7 +53,7 @@ pub fn (mut writer PPMWriter) start_for_file(fname string, settings ImageSetting
 	writer.file.writeln('P6 ${settings.width} ${settings.height} 255')!
 }
 
-pub fn (mut writer PPMWriter) handle_pixel(p gx.Color) ! {
+pub fn (mut writer PPMWriter) handle_pixel(p gg.Color) ! {
 	if writer.cache.len >= writer.cache_size {
 		writer.write()!
 		writer.flush()!

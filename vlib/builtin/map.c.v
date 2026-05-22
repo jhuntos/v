@@ -1,13 +1,13 @@
 module builtin
 
-fn C.wyhash(&byte, u64, u64, &u64) u64
+fn C.wyhash(&u8, u64, u64, &u64) u64
 
 fn C.wyhash64(u64, u64) u64
 
 // fast_string_eq is intended to be fast when
 // the strings are very likely to be equal
 // TODO: add branch prediction hints
-[inline]
+@[inline]
 fn fast_string_eq(a string, b string) bool {
 	if a.len != b.len {
 		return false
@@ -19,7 +19,8 @@ fn fast_string_eq(a string, b string) bool {
 
 fn map_hash_string(pkey voidptr) u64 {
 	key := *unsafe { &string(pkey) }
-	return C.wyhash(key.str, u64(key.len), 0, &u64(C._wyp))
+	// XTODO remove voidptr cast once virtual C.consts can be declared
+	return C.wyhash(key.str, u64(key.len), 0, &u64(voidptr(C._wyp)))
 }
 
 fn map_hash_int_1(pkey voidptr) u64 {
@@ -38,9 +39,61 @@ fn map_hash_int_8(pkey voidptr) u64 {
 	return C.wyhash64(*unsafe { &u64(pkey) }, 0)
 }
 
+fn map_enum_fn(kind int, esize int) voidptr {
+	if kind !in [1, 2, 3] {
+		panic('map_enum_fn: invalid kind')
+	}
+	if esize > 8 || esize < 0 {
+		panic('map_enum_fn: invalid esize')
+	}
+	if kind == 1 {
+		if esize > 4 {
+			return voidptr(map_hash_int_8)
+		}
+		if esize > 2 {
+			return voidptr(map_hash_int_4)
+		}
+		if esize > 1 {
+			return voidptr(map_hash_int_2)
+		}
+		if esize > 0 {
+			return voidptr(map_hash_int_1)
+		}
+	}
+	if kind == 2 {
+		if esize > 4 {
+			return voidptr(map_eq_int_8)
+		}
+		if esize > 2 {
+			return voidptr(map_eq_int_4)
+		}
+		if esize > 1 {
+			return voidptr(map_eq_int_2)
+		}
+		if esize > 0 {
+			return voidptr(map_eq_int_1)
+		}
+	}
+	if kind == 3 {
+		if esize > 4 {
+			return voidptr(map_clone_int_8)
+		}
+		if esize > 2 {
+			return voidptr(map_clone_int_4)
+		}
+		if esize > 1 {
+			return voidptr(map_clone_int_2)
+		}
+		if esize > 0 {
+			return voidptr(map_clone_int_1)
+		}
+	}
+	return unsafe { nil }
+}
+
 // Move all zeros to the end of the array and resize array
 fn (mut d DenseArray) zeros_to_end() {
-	// TODO alloca?
+	// TODO: alloca?
 	mut tmp_value := unsafe { malloc(d.value_bytes) }
 	mut tmp_key := unsafe { malloc(d.key_bytes) }
 	mut count := 0
@@ -68,10 +121,15 @@ fn (mut d DenseArray) zeros_to_end() {
 		d.deletes = 0
 		// TODO: reallocate instead as more deletes are likely
 		free(d.all_deleted)
+		d.all_deleted = nil
 	}
 	d.len = count
 	old_cap := d.cap
-	d.cap = if count < 8 { 8 } else { count }
+	if count < 8 {
+		d.cap = 8
+	} else {
+		d.cap = count
+	}
 	unsafe {
 		d.values = realloc_data(d.values, d.value_bytes * old_cap, d.value_bytes * d.cap)
 		d.keys = realloc_data(d.keys, d.key_bytes * old_cap, d.key_bytes * d.cap)

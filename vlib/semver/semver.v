@@ -50,48 +50,30 @@ pub fn from(input string) !Version {
 
 // build returns a `Version` structure with given `major`, `minor` and `patch` versions.
 pub fn build(major int, minor int, patch int) Version {
-	// TODO Check if versions are greater than zero.
+	// TODO: Check if versions are greater than zero.
 	return Version{major, minor, patch, '', ''}
 }
 
-// * Transformation.
 // increment returns a `Version` structure with incremented values.
 pub fn (ver Version) increment(typ Increment) Version {
 	return increment_version(ver, typ)
 }
 
-// * Comparison.
-// satisfies returns `true` if the `input` expression can be validated to `true`
-// when run against this `Version`.
-// Example: assert semver.build(1,0,0).satisfies('<=2.0.0') == true
+// satisfies returns `true` if the `input` expression can be validated to `true` when run against this `Version`.
+// Example: assert semver.build(1,0,0).satisfies('<=2.0.0')
 // Example: assert semver.build(1,0,0).satisfies('>=2.0.0') == false
 pub fn (ver Version) satisfies(input string) bool {
 	return version_satisfies(ver, input)
 }
 
-// eq returns `true` if `v1` is equal to `v2`.
-pub fn (v1 Version) eq(v2 Version) bool {
+// == checks if `v1` is equal to `v2`.
+pub fn (v1 Version) == (v2 Version) bool {
 	return compare_eq(v1, v2)
 }
 
-// gt returns `true` if `v1` is greater than `v2`.
-pub fn (v1 Version) gt(v2 Version) bool {
-	return compare_gt(v1, v2)
-}
-
-// lt returns `true` if `v1` is less than `v2`.
-pub fn (v1 Version) lt(v2 Version) bool {
+// < checks if `v1` is less than `v2`.
+pub fn (v1 Version) < (v2 Version) bool {
 	return compare_lt(v1, v2)
-}
-
-// ge returns `true` if `v1` is greater than or equal to `v2`.
-pub fn (v1 Version) ge(v2 Version) bool {
-	return compare_ge(v1, v2)
-}
-
-// le returns `true` if `v1` is less than or equal to `v2`.
-pub fn (v1 Version) le(v2 Version) bool {
-	return compare_le(v1, v2)
 }
 
 // str returns the `string` representation of the `Version`.

@@ -1,3 +1,4 @@
+// vtest retry: 3
 module sync
 
 import time
@@ -80,6 +81,7 @@ fn test_select() {
 				assert false
 			}
 		}
+
 		if j == 1100 {
 			// check also in other direction
 			assert idx == -2

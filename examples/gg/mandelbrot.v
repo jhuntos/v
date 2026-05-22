@@ -1,5 +1,4 @@
 import gg
-import gx
 import runtime
 import time
 
@@ -40,8 +39,8 @@ mut:
 	ntasks  int      = runtime.nr_jobs()
 }
 
-const colors = [gx.black, gx.blue, gx.red, gx.green, gx.yellow, gx.orange, gx.purple, gx.white,
-	gx.indigo, gx.violet, gx.black, gx.blue, gx.orange, gx.yellow, gx.green].map(u32(it.abgr8()))
+const colors = [gg.black, gg.blue, gg.red, gg.green, gg.yellow, gg.orange, gg.purple, gg.white,
+	gg.indigo, gg.violet, gg.black, gg.blue, gg.orange, gg.yellow, gg.green].map(u32(it.abgr8()))
 
 struct MandelChunk {
 	cview ViewRect
@@ -60,7 +59,7 @@ fn (mut state AppState) update() {
 	for t in 0 .. state.ntasks {
 		threads << spawn state.worker(t, chunk_channel, chunk_ready_channel)
 	}
-	//
+
 	mut oview := ViewRect{}
 	mut sw := time.new_stopwatch()
 	for {
@@ -75,8 +74,8 @@ fn (mut state AppState) update() {
 		for start := 0; start < pheight; start += chunk_height {
 			chunk_channel <- MandelChunk{
 				cview: cview
-				ymin: start
-				ymax: start + chunk_height
+				ymin:  start
+				ymax:  start + chunk_height
 			}
 			nchunks++
 		}
@@ -91,8 +90,8 @@ fn (mut state AppState) update() {
 	}
 }
 
-[direct_array_access]
-fn (mut state AppState) worker(id int, input chan MandelChunk, ready chan bool) {
+@[direct_array_access]
+fn (mut state AppState) worker(_id int, input chan MandelChunk, ready chan bool) {
 	for {
 		chunk := <-input or { break }
 		yscale := chunk.cview.height() / pheight
@@ -169,7 +168,7 @@ fn graphics_click(x f32, y f32, btn gg.MouseButton, mut state AppState) {
 	}
 }
 
-fn graphics_move(x f32, y f32, mut state AppState) {
+fn graphics_move(_x f32, _y f32, mut state AppState) {
 	if state.gg.mouse_buttons.has(.left) {
 		size := gg.window_size()
 		d_x := (f64(state.gg.mouse_dx) / size.width) * state.view.width()
@@ -185,7 +184,7 @@ fn graphics_scroll(e &gg.Event, mut state AppState) {
 	state.zoom(if e.scroll_y < 0 { zoom_factor } else { 1 / zoom_factor })
 }
 
-fn graphics_keydown(code gg.KeyCode, mod gg.Modifier, mut state AppState) {
+fn graphics_keydown(code gg.KeyCode, _mod gg.Modifier, mut state AppState) {
 	s_x := state.view.width() / 5
 	s_y := state.view.height() / 5
 	// movement
@@ -225,17 +224,17 @@ fn graphics_keydown(code gg.KeyCode, mod gg.Modifier, mut state AppState) {
 fn main() {
 	mut state := &AppState{}
 	state.gg = gg.new_context(
-		width: 800
-		height: 600
+		width:         800
+		height:        600
 		create_window: true
-		window_title: 'The Mandelbrot Set'
-		init_fn: graphics_init
-		frame_fn: graphics_frame
-		click_fn: graphics_click
-		move_fn: graphics_move
-		keydown_fn: graphics_keydown
-		scroll_fn: graphics_scroll
-		user_data: state
+		window_title:  'The Mandelbrot Set'
+		init_fn:       graphics_init
+		frame_fn:      graphics_frame
+		click_fn:      graphics_click
+		move_fn:       graphics_move
+		keydown_fn:    graphics_keydown
+		scroll_fn:     graphics_scroll
+		user_data:     state
 	)
 	spawn state.update()
 	state.gg.run()

@@ -1,9 +1,9 @@
 import v.reflection
 
-[test_struct]
+@[test_struct]
 struct Test {
-	m map[int]string [test]
-	n ?string        [test2; test3]
+	m map[int]string @[test]
+	n ?string        @[test2; test3]
 }
 
 enum Flags {
@@ -38,15 +38,15 @@ fn test_flag_result() {
 }
 
 fn test_array_sym() {
-	var := [1, 2]
+	var := ['abc', 'def']
 	typ := reflection.type_of(var)
 	assert typ.sym.kind == .array
 	assert typ.sym.language == .v
 	assert typ.sym.methods.len > 0
-	assert typ.sym.methods.filter(it.name == 'reduce').len > 0
-	assert typ.sym.name == '[]int'
+	assert typ.sym.methods.any(it.name == 'join')
+	assert typ.sym.name == '[]string'
 	assert (typ.sym.info as reflection.Array).nr_dims == 1
-	assert (typ.sym.info as reflection.Array).elem_type == typeof[int]().idx
+	assert (typ.sym.info as reflection.Array).elem_type == typeof[string]().idx
 }
 
 fn test_sumtype_sym() {
@@ -77,26 +77,34 @@ fn test_multi_return_sym() {
 	assert func.receiver_typ == 0
 	assert func.is_pub == false
 
-	typ := reflection.get_type(func.return_typ)?
+	typ := reflection.get_type(int(func.return_typ))?
 	assert typ.name == '(int, f64, string)'
+	assert typ.sym.mod == ''
 	assert typ.sym.language == .v
 	assert typ.sym.kind == .multi_return
 }
 
 fn test_enum_sym() {
 	var := reflection.type_of(Flags.foo)
-	assert var.sym.name == 'main.Flags'
+	assert var.sym.name == 'Flags'
+	assert var.sym.mod == 'main'
 	assert var.sym.parent_idx == 0
-	assert var.sym.kind == .enum_
+	assert var.sym.kind == .enum
 	assert var.sym.language == .v
 	assert (var.sym.info as reflection.Enum).vals == ['foo', 'bar']
 }
 
 fn test_struct_sym() {
 	var := reflection.type_of(Test{})
-	assert var.sym.kind == .struct_
+	assert var.sym.kind == .struct
+	assert var.sym.mod == 'main'
 	assert (var.sym.info as reflection.Struct).attrs.len == 1
-	assert (var.sym.info as reflection.Struct).attrs == ['test_struct']
+	assert (var.sym.info as reflection.Struct).attrs == [
+		VAttribute{
+			name: 'test_struct'
+			kind: .plain
+		},
+	]
 
 	field := (var.sym.info as reflection.Struct).fields[0]
 	field_typ := field.typ
@@ -106,12 +114,27 @@ fn test_struct_sym() {
 	assert (field_sym.sym.info as reflection.Map).key_type.idx() == typeof[int]().idx
 	assert (field_sym.sym.info as reflection.Map).value_type.idx() == typeof[string]().idx
 	assert field.attrs.len == 1
+	assert field.attrs == [
+		VAttribute{
+			name: 'test'
+			kind: .plain
+		},
+	]
 
 	field2 := (var.sym.info as reflection.Struct).fields[1]
 	field2_typ := (var.sym.info as reflection.Struct).fields[1].typ
 	assert field2_typ.has_flag(.option)
 	assert field2.name == 'n'
 	assert field2.attrs.len == 2
-	assert field2.attrs == ['test2', 'test3']
+	assert field2.attrs == [
+		VAttribute{
+			name: 'test2'
+			kind: .plain
+		},
+		VAttribute{
+			name: 'test3'
+			kind: .plain
+		},
+	]
 	assert field2.is_pub == false
 }

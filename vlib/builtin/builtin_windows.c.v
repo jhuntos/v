@@ -1,81 +1,61 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
-[has_globals]
+@[has_globals]
 module builtin
 
-// dbghelp.h is already included in cheaders.v
-#flag windows -l dbghelp
-// SymbolInfo is used by print_backtrace_skipping_top_frames_msvc
-pub struct SymbolInfo {
-pub mut:
-	f_size_of_struct u32 // must be 88 to be recognised by SymFromAddr
-	f_type_index     u32 // Type Index of symbol
-	f_reserved       [2]u64
-	f_index          u32
-	f_size           u32
-	f_mod_base       u64 // Base Address of module comtaining this symbol
-	f_flags          u32
-	f_value          u64 // Value of symbol, ValuePresent should be 1
-	f_address        u64 // Address of symbol including base address of module
-	f_register       u32 // register holding value or pointer to value
-	f_scope          u32 // scope of the symbol
-	f_tag            u32 // pdb classification
-	f_name_len       u32 // Actual length of name
-	f_max_name_len   u32 // must be manually set
-	f_name           u8  // must be calloc(f_max_name_len)
-}
+#include <io.h>
+#include <fcntl.h>
 
-pub struct SymbolInfoContainer {
-pub mut:
-	syminfo     SymbolInfo
-	f_name_rest [254]char
-}
+// Cast the V callback to the Windows SDK callback type. Clang 20 treats the
+// otherwise-compatible struct pointer mismatch as a hard error for v_win.c.
+#define v_set_unhandled_exception_filter(handler) SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)(handler))
 
-pub struct Line64 {
-pub mut:
-	f_size_of_struct u32
-	f_key            voidptr
-	f_line_number    u32
-	f_file_name      &u8 = unsafe { nil }
-	f_address        u64
-}
+// See https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types
+// See https://www.codeproject.com/KB/string/cppstringguide1.aspx
+pub type C.BOOL = int
+pub type C.LONG = int
 
-// returns the current options mask
-fn C.SymSetOptions(symoptions u32) u32
+pub type C.HINSTANCE = voidptr
 
-// returns handle
-fn C.GetCurrentProcess() voidptr
+pub type C.HICON = voidptr
 
-fn C.SymInitialize(h_process voidptr, p_user_search_path &u8, b_invade_process int) int
+pub type C.HCURSOR = voidptr
 
-fn C.CaptureStackBackTrace(frames_to_skip u32, frames_to_capture u32, p_backtrace voidptr, p_backtrace_hash voidptr) u16
+pub type C.HBRUSH = voidptr
 
-fn C.SymFromAddr(h_process voidptr, address u64, p_displacement voidptr, p_symbol voidptr) int
+pub type C.HWND = voidptr
 
-fn C.SymGetLineFromAddr64(h_process voidptr, address u64, p_displacement voidptr, p_line &Line64) int
+pub type C.HGLOBAL = voidptr
 
-// Ref - https://docs.microsoft.com/en-us/windows/win32/api/dbghelp/nf-dbghelp-symsetoptions
-const (
-	symopt_undname               = 0x00000002
-	symopt_deferred_loads        = 0x00000004
-	symopt_no_cpp                = 0x00000008
-	symopt_load_lines            = 0x00000010
-	symopt_include_32bit_modules = 0x00002000
-	symopt_allow_zero_address    = 0x01000000
-	symopt_debug                 = u32(0x80000000)
-)
+pub type C.HANDLE = voidptr
 
-// g_original_codepage - used to restore the original windows console code page when exiting
-__global g_original_codepage = u32(0)
+pub type C.LRESULT = voidptr
 
-// utf8 to stdout needs C.SetConsoleOutputCP(C.CP_UTF8)
-fn C.GetConsoleOutputCP() u32
+pub type C.CHAR = char
 
-fn C.SetConsoleOutputCP(wCodePageID u32) bool
+pub type C.TCHAR = u16 // It is u8 if UNICODE is not defined, but for V programs it always is
 
-fn restore_codepage() {
-	C.SetConsoleOutputCP(g_original_codepage)
+pub type C.WCHAR = u16
+
+pub type C.LPSTR = &char
+
+pub type C.LPWSTR = &C.WCHAR
+
+pub type C.LPTSTR = &C.TCHAR
+
+pub type C.LPCTSTR = &C.TCHAR
+
+fn C.WriteConsoleW(voidptr, &u16, u32, voidptr, voidptr) bool
+
+fn C._setmode(int, int) int
+
+// set_stream_binary_mode disables CRT newline translation for redirected stdio streams.
+fn set_stream_binary_mode(stream &C.FILE) {
+	fd := C._fileno(stream)
+	if fd >= 0 {
+		C._setmode(fd, C._O_BINARY)
+	}
 }
 
 fn is_terminal(fd int) int {
@@ -85,129 +65,85 @@ fn is_terminal(fd int) int {
 	return int(mode)
 }
 
+const std_output_handle = -11
+const std_error_handle = -12
+const enable_processed_output = 1
+const enable_wrap_at_eol_output = 2
+const evable_virtual_terminal_processing = 4
+
+// Write UTF-8 directly as UTF-16 for console hosts instead of changing the console code page.
+@[manualfree]
+fn write_buf_to_console(fd int, buf &u8, buf_len int) bool {
+	if buf_len <= 0 || is_terminal(fd) <= 0 {
+		return false
+	}
+	mut console_handle := C.GetStdHandle(std_output_handle)
+	if fd == 2 {
+		console_handle = C.GetStdHandle(std_error_handle)
+	}
+	if isnil(console_handle) {
+		return false
+	}
+	unsafe {
+		wide_len := C.MultiByteToWideChar(cp_utf8, 0, &char(buf), buf_len, 0, 0)
+		if wide_len <= 0 {
+			return false
+		}
+		mut wide_buf := &u16(malloc_noscan((wide_len + 1) * int(sizeof(u16))))
+		if isnil(wide_buf) {
+			return false
+		}
+		defer {
+			free(wide_buf)
+		}
+		converted := C.MultiByteToWideChar(cp_utf8, 0, &char(buf), buf_len, wide_buf, wide_len)
+		if converted <= 0 {
+			return false
+		}
+		wide_buf[converted] = 0
+		mut remaining_chars := converted
+		mut wide_ptr := wide_buf
+		for remaining_chars > 0 {
+			mut chars_written := u32(0)
+			if !C.WriteConsoleW(console_handle, wide_ptr, u32(remaining_chars), voidptr(&chars_written), nil)
+				|| chars_written == 0 {
+				return false
+			}
+			wide_ptr += int(chars_written)
+			remaining_chars -= int(chars_written)
+		}
+		return true
+	}
+}
+
+@[markused]
 fn builtin_init() {
-	g_original_codepage = C.GetConsoleOutputCP()
-	C.SetConsoleOutputCP(C.CP_UTF8)
-	C.atexit(restore_codepage)
+	$if gcboehm ? {
+		$if !gc_warn_on_stderr ? {
+			gc_set_warn_proc(internal_gc_warn_proc_none)
+		}
+	}
+	set_stream_binary_mode(C.stdout)
+	set_stream_binary_mode(C.stderr)
 	if is_terminal(1) > 0 {
-		C.SetConsoleMode(C.GetStdHandle(C.STD_OUTPUT_HANDLE), C.ENABLE_PROCESSED_OUTPUT | C.ENABLE_WRAP_AT_EOL_OUTPUT | 0x0004) // enable_virtual_terminal_processing
-		C.SetConsoleMode(C.GetStdHandle(C.STD_ERROR_HANDLE), C.ENABLE_PROCESSED_OUTPUT | C.ENABLE_WRAP_AT_EOL_OUTPUT | 0x0004) // enable_virtual_terminal_processing
+		C.SetConsoleMode(C.GetStdHandle(std_output_handle),
+			enable_processed_output | enable_wrap_at_eol_output | evable_virtual_terminal_processing)
+		C.SetConsoleMode(C.GetStdHandle(std_error_handle),
+			enable_processed_output | enable_wrap_at_eol_output | evable_virtual_terminal_processing)
 		unsafe {
-			C.setbuf(C.stdout, 0)
-			C.setbuf(C.stderr, 0)
+			set_stream_unbuffered(C.stdout)
+			set_stream_unbuffered(C.stderr)
 		}
 	}
 	$if !no_backtrace ? {
 		add_unhandled_exception_handler()
 	}
+	// On windows, the default buffering is block based (~4096bytes), which interferes badly with non cmd shells
+	// It is much better to have it off by default instead.
+	unbuffer_stdout()
 }
 
-fn print_backtrace_skipping_top_frames(skipframes int) bool {
-	$if msvc {
-		return print_backtrace_skipping_top_frames_msvc(skipframes)
-	}
-	$if tinyc {
-		return print_backtrace_skipping_top_frames_tcc(skipframes)
-	}
-	$if mingw {
-		return print_backtrace_skipping_top_frames_mingw(skipframes)
-	}
-	eprintln('print_backtrace_skipping_top_frames is not implemented')
-	return false
-}
-
-fn print_backtrace_skipping_top_frames_msvc(skipframes int) bool {
-	$if msvc {
-		mut offset := u64(0)
-		backtraces := [100]voidptr{}
-		sic := SymbolInfoContainer{}
-		mut si := &sic.syminfo
-		si.f_size_of_struct = sizeof(SymbolInfo) // Note: C.SYMBOL_INFO is 88
-		si.f_max_name_len = sizeof(SymbolInfoContainer) - sizeof(SymbolInfo) - 1
-		fname := &char(&si.f_name)
-		mut sline64 := Line64{
-			f_file_name: &u8(0)
-		}
-		sline64.f_size_of_struct = sizeof(Line64)
-
-		handle := C.GetCurrentProcess()
-		defer {
-			C.SymCleanup(handle)
-		}
-
-		C.SymSetOptions(symopt_debug | symopt_load_lines | symopt_undname)
-
-		syminitok := C.SymInitialize(handle, 0, 1)
-		if syminitok != 1 {
-			eprintln('Failed getting process: Aborting backtrace.\n')
-			return false
-		}
-
-		frames := int(C.CaptureStackBackTrace(skipframes + 1, 100, &backtraces[0], 0))
-		if frames < 2 {
-			eprintln('C.CaptureStackBackTrace returned less than 2 frames')
-			return false
-		}
-		for i in 0 .. frames {
-			frame_addr := backtraces[i]
-			if C.SymFromAddr(handle, frame_addr, &offset, si) == 1 {
-				nframe := frames - i - 1
-				mut lineinfo := ''
-				if C.SymGetLineFromAddr64(handle, frame_addr, &offset, &sline64) == 1 {
-					file_name := unsafe { tos3(sline64.f_file_name) }
-					lnumber := sline64.f_line_number
-					lineinfo = '${file_name}:${lnumber}'
-				} else {
-					// addr:
-					lineinfo = '?? : address = 0x${(&frame_addr):x}'
-				}
-				sfunc := unsafe { tos3(fname) }
-				eprintln('${nframe:-2d}: ${sfunc:-25s}  ${lineinfo}')
-			} else {
-				// https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes
-				cerr := int(C.GetLastError())
-				if cerr == 87 {
-					eprintln('SymFromAddr failure: ${cerr} = The parameter is incorrect)')
-				} else if cerr == 487 {
-					// probably caused because the .pdb isn't in the executable folder
-					eprintln('SymFromAddr failure: ${cerr} = Attempt to access invalid address (Verify that you have the .pdb file in the right folder.)')
-				} else {
-					eprintln('SymFromAddr failure: ${cerr} (see https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes)')
-				}
-			}
-		}
-		return true
-	} $else {
-		eprintln('print_backtrace_skipping_top_frames_msvc must be called only when the compiler is msvc')
-		return false
-	}
-}
-
-fn print_backtrace_skipping_top_frames_mingw(skipframes int) bool {
-	eprintln('print_backtrace_skipping_top_frames_mingw is not implemented')
-	return false
-}
-
-fn C.tcc_backtrace(fmt &char) int
-
-fn print_backtrace_skipping_top_frames_tcc(skipframes int) bool {
-	$if tinyc {
-		$if no_backtrace ? {
-			eprintln('backtraces are disabled')
-			return false
-		} $else {
-			C.tcc_backtrace(c'Backtrace')
-			return true
-		}
-	} $else {
-		eprintln('print_backtrace_skipping_top_frames_tcc must be called only when the compiler is tcc')
-		return false
-	}
-	// Not reachable, but it looks like it's not detectable by V
-	return false
-}
-
-// TODO copypaste from os
+// TODO: copypaste from os
 // we want to be able to use this here without having to `import os`
 struct ExceptionRecord {
 pub:
@@ -230,25 +166,28 @@ pub:
 	context_record   &ContextRecord   = unsafe { nil }
 }
 
-type VectoredExceptionHandler = fn (&ExceptionPointers) int
+@[callconv: stdcall]
+type TopLevelExceptionFilter = fn (&ExceptionPointers) C.LONG
 
-fn C.AddVectoredExceptionHandler(int, voidptr)
+fn C.SetUnhandledExceptionFilter(TopLevelExceptionFilter) voidptr
+fn C.v_set_unhandled_exception_filter(TopLevelExceptionFilter) voidptr
 
-fn add_vectored_exception_handler(handler VectoredExceptionHandler) {
-	C.AddVectoredExceptionHandler(1, voidptr(handler))
-}
-
-[callconv: stdcall]
-fn unhandled_exception_handler(e &ExceptionPointers) int {
+@[callconv: stdcall]
+fn unhandled_exception_handler(e &ExceptionPointers) C.LONG {
 	match e.exception_record.code {
 		// These are 'used' by the backtrace printer
 		// so we dont want to catch them...
-		0x4001000A, 0x40010006, 0xE06D7363 {
+		0x4001000A, 0x40010006, 0x406D1388, 0xE06D7363 {
 			return 0
 		}
 		else {
-			println('Unhandled Exception 0x${e.exception_record.code:X}')
+			eprintln('Unhandled Exception 0x' + ptr_str(e.exception_record.code) + ' at ' +
+				ptr_str(e.exception_record.address))
+			flush_stdout()
+			flush_stderr()
 			print_backtrace_skipping_top_frames(5)
+			flush_stdout()
+			flush_stderr()
 		}
 	}
 
@@ -256,7 +195,10 @@ fn unhandled_exception_handler(e &ExceptionPointers) int {
 }
 
 fn add_unhandled_exception_handler() {
-	add_vectored_exception_handler(VectoredExceptionHandler(voidptr(unhandled_exception_handler)))
+	// A vectored handler also sees first-chance exceptions that Windows APIs may
+	// handle internally, which can lead to false-positive "Unhandled Exception"
+	// reports. Register a top-level filter instead.
+	C.v_set_unhandled_exception_filter(unhandled_exception_handler)
 }
 
 fn C.IsDebuggerPresent() bool
@@ -277,15 +219,22 @@ fn break_if_debugger_attached() {
 	}
 }
 
+const format_message_allocate_buffer = 0x00000100
+const format_message_argument_array = 0x00002000
+const format_message_from_hmodule = 0x00000800
+const format_message_from_string = 0x00000400
+const format_message_from_system = 0x00001000
+const format_message_ignore_inserts = 0x00000200
+
 // return an error message generated from WinAPI's `LastError`
 pub fn winapi_lasterr_str() string {
 	err_msg_id := C.GetLastError()
 	if err_msg_id == 8 {
-		// handle this case special since `FormatMessage()` might not work anymore
+		// handle this case special since `FormatMessageW()` might not work anymore
 		return 'insufficient memory'
 	}
-	mut msgbuf := &u16(0)
-	res := C.FormatMessage(C.FORMAT_MESSAGE_ALLOCATE_BUFFER | C.FORMAT_MESSAGE_FROM_SYSTEM | C.FORMAT_MESSAGE_IGNORE_INSERTS,
+	mut msgbuf := &u16(unsafe { nil })
+	res := C.FormatMessageW(format_message_allocate_buffer | format_message_from_system | format_message_ignore_inserts,
 		0, err_msg_id, 0, voidptr(&msgbuf), 0, 0)
 	err_msg := if res == 0 {
 		'Win-API error ${err_msg_id}'
@@ -296,7 +245,7 @@ pub fn winapi_lasterr_str() string {
 }
 
 // panic with an error message generated from WinAPI's `LastError`
-[noreturn]
+@[noreturn]
 pub fn panic_lasterr(base string) {
 	panic(base + winapi_lasterr_str())
 }

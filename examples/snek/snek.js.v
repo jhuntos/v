@@ -1,17 +1,14 @@
 import gg
-import gx
 // import sokol.sapp
 import time
 import rand
 
 // constants
-const (
-	top_height   = 100
-	canvas_size  = 700
-	game_size    = 17
-	tile_size    = canvas_size / game_size
-	tick_rate_ms = 100
-)
+const top_height = 100
+const canvas_size = 700
+const game_size = 17
+const tile_size = canvas_size / game_size
+const tick_rate_ms = 100
 
 // types
 struct Pos {
@@ -75,7 +72,7 @@ fn (mut app App) move_food() {
 }
 
 // events
-fn on_keydown(key gg.KeyCode, mod gg.Modifier, mut app App) {
+fn on_keydown(key gg.KeyCode, _ gg.Modifier, mut app App) {
 	match key {
 		.w, .up {
 			if app.last_dir != .down {
@@ -143,21 +140,21 @@ fn on_frame(mut app App) {
 	}
 	// drawing snake
 	for pos in app.snake {
-		app.gg.draw_rect(tile_size * pos.x, tile_size * pos.y + top_height, tile_size,
-			tile_size, gx.blue)
+		app.gg.draw_rect(tile_size * pos.x, tile_size * pos.y + top_height, tile_size, tile_size,
+			gg.blue)
 	}
 
 	// drawing food
 	app.gg.draw_rect(tile_size * app.food.x, tile_size * app.food.y + top_height, tile_size,
-		tile_size, gx.red)
+		tile_size, gg.red)
 
 	// drawing top
-	app.gg.draw_rect(0, 0, canvas_size, top_height, gx.black)
-	app.gg.draw_text(350, top_height / 2, 'Score: ${app.score}', gx.TextCfg{
-		color: gx.white
-		align: .center
+	app.gg.draw_rect(0, 0, canvas_size, top_height, gg.black)
+	app.gg.draw_text(350, top_height / 2, 'Score: ${app.score}', gg.TextCfg{
+		color:          gg.white
+		align:          .center
 		vertical_align: .middle
-		size: 80
+		size:           80
 	})
 
 	// checking if snake bit itself
@@ -181,15 +178,15 @@ fn main() {
 	app.reset_game()
 
 	app.gg = gg.new_context(
-		bg_color: gx.white
-		frame_fn: on_frame
-		keydown_fn: on_keydown
-		user_data: &app
-		width: canvas_size
-		height: top_height + canvas_size
-		create_window: true
-		resizable: false
-		window_title: 'snek'
+		bg_color:          gg.white
+		frame_fn:          on_frame
+		keydown_fn:        on_keydown
+		user_data:         &app
+		width:             canvas_size
+		height:            top_height + canvas_size
+		create_window:     true
+		resizable:         false
+		window_title:      'snek'
 		html5_canvas_name: 'canvas'
 	)
 

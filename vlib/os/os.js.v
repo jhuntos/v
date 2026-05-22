@@ -6,11 +6,11 @@ $if js_node {
 	#var tty = require('tty')
 }
 
-pub const (
-	path_delimiter = get_path_delimiter()
-	path_separator = get_path_separator()
-	args           = []string{}
-)
+pub const path_delimiter = get_path_delimiter()
+pub const path_separator = get_path_separator()
+pub const path_devnull = '/dev/null' // TODO
+
+pub const args = []string{}
 
 const executable_suffixes = ['']
 
@@ -137,7 +137,28 @@ pub fn execute(cmd string) Result {
 
 	return Result{
 		exit_code: exit_code
-		output: stdout
+		output:    stdout
+	}
+}
+
+// exec starts the specified command with arguments, waits for it to complete, and returns its output.
+pub fn exec(args []string) Result {
+	if args.len == 0 {
+		return Result{
+			exit_code: -1
+			output:    'exec requires at least one argument'
+		}
+	}
+	mut exit_code := 0
+	mut stdout := ''
+	#let commands = args.arr.map((x) => x.valueOf() + '');
+	#let output = $child_process.spawnSync(commands[0], commands.slice(1, commands.length));
+	#exit_code = new int(output.status === null ? -1 : output.status)
+	#stdout = new string((output.stdout ? output.stdout + '' : '') + (output.stderr ? output.stderr + '' : ''))
+
+	return Result{
+		exit_code: exit_code
+		output:    stdout
 	}
 }
 

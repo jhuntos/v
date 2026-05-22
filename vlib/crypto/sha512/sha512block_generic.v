@@ -1,10 +1,10 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 // SHA512 block step.
 // This is the generic version with no architecture optimizations.
 // In its own file so that an architecture
-// optimized verision can be substituted
+// optimized version can be substituted
 module sha512
 
 import math.bits
@@ -34,10 +34,11 @@ const _k = [
 	]
 // vfmt on
 
+@[direct_array_access]
 fn block_generic(mut dig Digest, p_ []u8) {
 	unsafe {
 		mut p := p_
-		mut w := []u64{len: (80)}
+		mut w := [80]u64{}
 		mut h0 := dig.h[0]
 		mut h1 := dig.h[1]
 		mut h2 := dig.h[2]

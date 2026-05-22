@@ -51,7 +51,7 @@ version of V, and then advises the user to install V from source if he wants to 
 
 5) The V source repo contains sizable folders like `.git/` and `thirdparty/tcc/.git/` which will
 not be needed by users of packages (they are not useful if `v up` is disabled,
-as recommended previously). Some other files, such as `Makefile`, `make.bat`, and `GNUmakefile`
+as recommended previously). Some other files, such as `Makefile`, `makev.bat`, and `GNUmakefile`
 will not be used either, so they can also be safely removed.
 
 Depending on how stripped you want your package, you can remove the examples/ folder as well.
@@ -97,20 +97,20 @@ efforts:
 
 ```sh
 echo "println('use your package manager to update V," > cmd/tools/vup.v
-echo "or if you want more recent V versions, just clone V from source," > cmd/tools/vup.v
-echo "see https://github.com/vlang/v#installing-v-from-source')" > cmd/tools/vup.v
+echo "or if you want more recent V versions, just clone V from source," >> cmd/tools/vup.v
+echo "see https://github.com/vlang/v#installing-v-from-source')" >> cmd/tools/vup.v
 
 echo "println('v self is disabled for packaged versions of V." > cmd/tools/vself.v
-echo "Use your package manager, to update your V package instead." > cmd/tools/vself.v
-echo "Alternatively, if you do want a more recent V version, just clone V from source," > cmd/tools/vself.v
-echo "then follow the instructions here: https://github.com/vlang/v#installing-v-from-source')" > cmd/tools/vself.v
+echo "Use your package manager, to update your V package instead." >> cmd/tools/vself.v
+echo "Alternatively, if you do want a more recent V version, just clone V from source," >> cmd/tools/vself.v
+echo "then follow the instructions here: https://github.com/vlang/v#installing-v-from-source')" >> cmd/tools/vself.v
 
 v -prod -o v cmd/v                            ## build V itself with -prod
 ./v -prod build-tools                         ## build all tools with -prod too
 touch ./cmd/tools/.disable_autorecompilation  ## tell V to not try to recompile any tool anymore
 
-### Cleanup folders that would not be needed inside a pacakge,
-### that is distrubuted separately from the V source repository:
+### Cleanup folders that would not be needed inside a package,
+### that is distributed separately from the V source repository:
 rm -rf .git/
 rm -rf thirdparty/tcc/.git/
 ```
@@ -119,7 +119,7 @@ Example `v` script for your bin folder:
 --------------------------------------------------
 
 ```sh
-#!/bin/bash
+#!/usr/bin/env bash
 
 export VEXE="/opt/vlang/v"
 export VFLAGS="-cc /usr/bin/custom_cc"

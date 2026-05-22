@@ -1,12 +1,14 @@
+// vtest build: !openbsd
 import os
 import time
 import sokol.audio
 
 struct Player {
 mut:
-	samples  []f32
-	pos      int
-	finished bool
+	sample_rate int
+	samples     []f32
+	pos         int
+	finished    bool
 }
 
 fn main() {
@@ -37,27 +39,30 @@ fn play_sounds(files []string) ! {
 }
 
 //
-fn audio_player_callback(buffer &f32, num_frames int, num_channels int, mut p Player) {
+fn audio_player_callback(mut buffer &f32, num_frames int, num_channels int, mut p Player) {
+	ntotal := num_channels * num_frames
+	unsafe { vmemset(buffer, 0, ntotal * 4) }
 	if p.finished {
 		return
 	}
-	ntotal := num_channels * num_frames
 	nremaining := p.samples.len - p.pos
 	nsamples := if nremaining < ntotal { nremaining } else { ntotal }
 	if nsamples <= 0 {
 		p.finished = true
 		return
 	}
-	unsafe { vmemcpy(buffer, &p.samples[p.pos], nsamples * int(sizeof(f32))) }
+	unsafe { vmemcpy(buffer, &p.samples[p.pos], nsamples * 4) }
 	p.pos += nsamples
 }
 
 fn (mut p Player) init() {
 	audio.setup(
-		num_channels: 2
+		num_channels:       1
 		stream_userdata_cb: audio_player_callback
-		user_data: p
+		user_data:          p
+		sample_rate:        44100
 	)
+	p.sample_rate = audio.sample_rate()
 }
 
 fn (mut p Player) stop() {
@@ -118,12 +123,12 @@ struct RIFFFormat {
 
 fn read_wav_file_samples(fpath string) ![]f32 {
 	mut res := []f32{}
-	// eprintln('> read_wav_file_samples: $fpath -------------------------------------------------')
+	// eprintln('> read_wav_file_samples: ${fpath} -------------------------------------------------')
 	mut bytes := os.read_bytes(fpath)!
 	mut pbytes := &u8(bytes.data)
 	mut offset := u32(0)
 	rh := unsafe { &RIFFHeader(pbytes) }
-	// eprintln('rh: $rh')
+	// eprintln('rh: ${rh}')
 	if rh.riff != [u8(`R`), `I`, `F`, `F`]! {
 		return error('WAV should start with `RIFF`')
 	}
@@ -142,8 +147,8 @@ fn read_wav_file_samples(fpath string) ![]f32 {
 		//
 		ch := unsafe { &RIFFChunkHeader(pbytes + offset) }
 		offset += 8 + ch.chunk_size
-		// eprintln('ch: $ch')
-		// eprintln('p: $pbytes | offset: $offset | bytes.len: $bytes.len')
+		// eprintln('ch: ${ch}')
+		// eprintln('p: ${pbytes} | offset: ${offset} | bytes.len: ${bytes.len}')
 		// ////////
 		if ch.chunk_type == [u8(`L`), `I`, `S`, `T`]! {
 			continue
@@ -156,7 +161,7 @@ fn read_wav_file_samples(fpath string) ![]f32 {
 		if ch.chunk_type == [u8(`f`), `m`, `t`, ` `]! {
 			// eprintln('`fmt ` chunk')
 			rf = unsafe { &RIFFFormat(&ch.chunk_data) }
-			// eprintln('fmt riff format: $rf')
+			// eprintln('fmt riff format: ${rf}')
 			if rf.format_tag != 1 {
 				return error('only PCM encoded WAVs are supported')
 			}
@@ -173,7 +178,7 @@ fn read_wav_file_samples(fpath string) ![]f32 {
 			if unsafe { rf == 0 } {
 				return error('`data` chunk should be after `fmt ` chunk')
 			}
-			// eprintln('`fmt ` chunk: $rf\n`data` chunk: $ch')
+			// eprintln('`fmt ` chunk: ${rf}\n`data` chunk: ${ch}')
 			mut doffset := 0
 			mut dp := unsafe { &u8(&ch.chunk_data) }
 			for doffset < ch.chunk_size {
@@ -194,10 +199,7 @@ fn read_wav_file_samples(fpath string) ![]f32 {
 					}
 					doffset += step
 					if doffset < ch.chunk_size {
-						res << x
-						if rf.nchannels == 1 {
-							// Duplicating single channel mono sounds,
-							// produces a stereo sound, simplifying further processing:
+						for _ in 0 .. (44100 / rf.sample_rate) {
 							res << x
 						}
 					}

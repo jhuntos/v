@@ -4,12 +4,11 @@ module main
 // and that it exits with code 1, when at least 1 FAIL happen.
 import os
 import rand
+import time
 
-const (
-	vexe  = os.quoted_path(get_vexe_path())
-	vroot = os.dir(vexe)
-	tdir  = new_tdir()
-)
+const vexe = os.quoted_path(get_vexe_path())
+const vroot = os.dir(vexe)
+const tdir = new_tdir()
 
 fn get_vexe_path() string {
 	env_vexe := os.getenv('VEXE')
@@ -26,10 +25,10 @@ fn get_vexe_path() string {
 }
 
 fn new_tdir() string {
-	dir := os.join_path(os.vtmp_dir(), 'v', rand.ulid())
+	dir := os.join_path(os.vtmp_dir(), rand.ulid())
 	os.rmdir_all(dir) or {}
 	os.mkdir_all(dir) or { panic(err) }
-	C.atexit(cleanup_tdir)
+	at_exit(cleanup_tdir) or {}
 	return dir
 }
 
@@ -40,7 +39,7 @@ fn cleanup_tdir() {
 
 type MyResult = string
 
-[noreturn]
+@[noreturn]
 fn (result MyResult) fail(reason string) {
 	eprintln('> ${reason}, but it does not. Result:\n${result}')
 	exit(1)
@@ -69,7 +68,8 @@ fn create_test(tname string, tcontent string) !string {
 
 fn check_assert_continues_works() ! {
 	os.chdir(tdir)!
-	create_test('assert_continues_option_works_test.v', 'fn test_fail1() { assert 2==4\nassert 2==1\nassert 2==0 }\nfn test_ok(){ assert true }\nfn test_fail2() { assert false }')!
+	create_test('assert_continues_option_works_test.v',
+		'fn test_fail1() { assert 2==4\nassert 2==1\nassert 2==0 }\nfn test_ok(){ assert true }\nfn test_fail2() { assert false }')!
 	result := check_fail('${vexe} -assert continues assert_continues_option_works_test.v')
 	result.has('assert_continues_option_works_test.v:1: fn test_fail1')
 	result.has('assert_continues_option_works_test.v:2: fn test_fail1')
@@ -77,7 +77,8 @@ fn check_assert_continues_works() ! {
 	result.has('assert_continues_option_works_test.v:5: fn test_fail2')
 	result.has('> assert 2 == 4').has('> assert 2 == 1').has('> assert 2 == 0')
 	// Check if a test function, tagged with [assert_continues], has the same behaviour, without needing additional options
-	create_test('assert_continues_tag_works_test.v', '[assert_continues]fn test_fail1() { assert 2==4\nassert 2==1\nassert 2==0 }\nfn test_ok(){ assert true }\nfn test_fail2() { assert false\n assert false }')!
+	create_test('assert_continues_tag_works_test.v',
+		'@[assert_continues]fn test_fail1() { assert 2==4\nassert 2==1\nassert 2==0 }\nfn test_ok(){ assert true }\nfn test_fail2() { assert false\n assert false }')!
 	tag_res := check_fail('${vexe} assert_continues_tag_works_test.v')
 	tag_res.has('assert_continues_tag_works_test.v:1: fn test_fail1')
 	tag_res.has('assert_continues_tag_works_test.v:2: fn test_fail1')
@@ -112,24 +113,33 @@ fn main() {
 	defer {
 		os.chdir(os.wd_at_startup) or {}
 	}
+	unbuffer_stdout()
+	spawn fn () {
+		time.sleep(120 * time.second)
+		eprintln('>>> exiting due to an expired watchdog timer <<<')
+		exit(1)
+	}()
 	println('> vroot: ${vroot} | vexe: ${vexe} | tdir: ${tdir}')
+	os.setenv('VTEST_HIDE_OK', '0', true)
 	ok_fpath := create_test('a_single_ok_test.v', 'fn test_ok(){ assert true }')!
 	if check_ok('${vexe} ${ok_fpath}') != '' {
 		exit(1)
 	}
 	check_ok('${vexe} test ${ok_fpath}').matches('*OK*a_single_ok_test.v*')
 	check_ok('${vexe} test "${tdir}"').matches('*OK*a_single_ok_test.v*')
-	//
+	check_ok('${vexe} -stats test "${tdir}"').matches('*OK*a_single_ok_test.v*')
+
 	fail_fpath := create_test('a_single_failing_test.v', 'fn test_fail(){ assert 1 == 2 }')!
 	check_fail('${vexe} ${fail_fpath}').has('> assert 1 == 2').has('a_single_failing_test.v:1: fn test_fail')
 	check_fail('${vexe} test ${fail_fpath}').has('> assert 1 == 2').has('a_single_failing_test.v:1: fn test_fail')
 	check_fail('${vexe} test "${tdir}"').has('> assert 1 == 2')
+	check_fail('${vexe} -stats test "${tdir}"').has('> assert 1 == 2')
 	rel_dir := os.join_path(tdir, rand.ulid())
 	os.mkdir(rel_dir)!
 	os.chdir(rel_dir)!
 	relative_path := '..' + os.path_separator + 'a_single_ok_test.v'
 	check_ok('${vexe} test ${os.quoted_path(relative_path)}').has('OK').has('a_single_ok_test.v')
-	//
+
 	check_assert_continues_works()!
 	println('> all done')
 }

@@ -44,10 +44,9 @@ import flag
 import time
 import toml
 
-const (
-	tool_name        = 'vgret'
-	tool_version     = '0.0.2'
-	tool_description = '\n  Dump and/or compare rendered frames of graphical apps
+const tool_name = 'vgret'
+const tool_version = '0.0.2'
+const tool_description = '\n  Dump and/or compare rendered frames of graphical apps
   both external and `gg` based apps is supported.
 
 Examples:
@@ -58,25 +57,21 @@ Examples:
   Compare screenshots in `/tmp/src` to existing screenshots in `/tmp/dst`
     v gret --compare-only /tmp/src /tmp/dst
 '
-	tmp_dir    = os.join_path(os.vtmp_dir(), 'v', tool_name)
-	runtime_os = os.user_os()
-	v_root     = os.real_path(@VMODROOT)
-)
 
-const (
-	supported_hosts           = ['linux']
-	supported_capture_methods = ['gg_record', 'generic_screenshot']
-	// External tool executables
-	v_exe                     = os.getenv('VEXE')
-	idiff_exe                 = os.find_abs_path_of_executable('idiff') or { '' }
-)
+const tmp_dir = os.join_path(os.vtmp_dir(), tool_name)
+const runtime_os = os.user_os()
+const v_root = os.real_path(@VMODROOT)
 
-const (
-	embedded_toml    = $embed_file('vgret.defaults.toml', .zlib)
-	default_toml     = embedded_toml.to_string()
-	empty_toml_array = []toml.Any{}
-	empty_toml_map   = map[string]toml.Any{}
-)
+const supported_hosts = ['linux']
+const supported_capture_methods = ['gg_record', 'generic_screenshot']
+// External tool executables
+const v_exe = os.getenv('VEXE')
+const idiff_exe = os.find_abs_path_of_executable('idiff') or { '' }
+
+const embedded_toml = $embed_file('vgret.defaults.toml', .zlib)
+const default_toml = embedded_toml.to_string()
+const empty_toml_array = []toml.Any{}
+const empty_toml_map = map[string]toml.Any{}
 
 struct Config {
 	path string
@@ -167,12 +162,14 @@ fn main() {
 
 	// Collect tool options
 	mut opt := Options{
-		verbose: fp.bool('verbose', `v`, false, "Be verbose about the tool's progress.")
-		compare_only: fp.bool('compare-only', `c`, false, "Don't generate screenshots - only compare input directories")
-		root_path: fp.string('root-path', `r`, v_root, 'Root path of the comparison')
+		verbose:      fp.bool('verbose', `v`, false, "Be verbose about the tool's progress.")
+		compare_only: fp.bool('compare-only', `c`, false,
+			"Don't generate screenshots - only compare input directories")
+		root_path:    fp.string('root-path', `r`, v_root, 'Root path of the comparison')
 	}
 
-	toml_conf := fp.string('toml-config', `t`, default_toml, 'Path or string with TOML configuration')
+	toml_conf := fp.string('toml-config', `t`, default_toml,
+		'Path or string with TOML configuration')
 	arg_paths := fp.finalize()!
 	if show_help {
 		println(fp.usage())
@@ -235,7 +232,8 @@ fn generate_screenshots(mut opt Options, output_path string) ! {
 
 		if app_config.capture.method == 'gg_record' {
 			opt.verbose_eprintln('Compiling shaders (if needed) for `${file}`')
-			sh_result := opt.verbose_execute('${os.quoted_path(v_exe)} shader ${os.quoted_path(app_path)}')
+			sh_result :=
+				opt.verbose_execute('${os.quoted_path(v_exe)} shader ${os.quoted_path(app_path)}')
 			if sh_result.exit_code != 0 {
 				opt.verbose_eprintln('Skipping shader compile for `${file}` v shader failed with:\n${sh_result.output}')
 				continue
@@ -344,7 +342,8 @@ fn take_screenshots(opt Options, app AppConfig) ![]string {
 				}
 
 				flags := app.capture.flags.join(' ')
-				result := opt.verbose_execute('${os.quoted_path(v_exe)} ${flags} -d gg_record run ${os.quoted_path(app.abs_path)}')
+				result :=
+					opt.verbose_execute('${os.quoted_path(v_exe)} ${flags} -d gg_record run ${os.quoted_path(app.abs_path)}')
 				if result.exit_code != 0 {
 					return error('Failed taking screenshot of `${app.abs_path}`:\n${result.output}')
 				}
@@ -405,7 +404,8 @@ fn take_screenshots(opt Options, app AppConfig) ![]string {
 							}
 							continue
 						}
-						extract_result := opt.verbose_execute('convert -extract ${region.width}x${region.height}+${region.x}+${region.y} "${out_file}" "${region_out_file}"')
+						extract_result :=
+							opt.verbose_execute('convert -extract ${region.width}x${region.height}+${region.x}+${region.y} "${out_file}" "${region_out_file}"')
 						if extract_result.exit_code != 0 {
 							p_app.signal_kill()
 							return error('Failed extracting region ${region_id} from screenshot of `${app.abs_path}` to "${region_out_file}":\n${result.output}')
@@ -451,7 +451,7 @@ fn new_config(root_path string, toml_config string) !Config {
 	compare_flags := doc.value('compare.flags').default_to(empty_toml_array).array().as_strings()
 	default_compare := CompareOptions{
 		method: compare_method
-		flags: compare_flags
+		flags:  compare_flags
 	}
 	capture_method := doc.value('capture.method').default_to('gg_record').string()
 	capture_flags := doc.value('capture.flags').default_to(empty_toml_array).array().as_strings()
@@ -459,9 +459,9 @@ fn new_config(root_path string, toml_config string) !Config {
 	mut capture_regions := []CaptureRegion{}
 	for capture_region_any in capture_regions_any {
 		region := CaptureRegion{
-			x: capture_region_any.value('x').default_to(0).int()
-			y: capture_region_any.value('y').default_to(0).int()
-			width: capture_region_any.value('width').default_to(0).int()
+			x:      capture_region_any.value('x').default_to(0).int()
+			y:      capture_region_any.value('y').default_to(0).int()
+			width:  capture_region_any.value('width').default_to(0).int()
 			height: capture_region_any.value('height').default_to(0).int()
 		}
 		capture_regions << region
@@ -473,11 +473,11 @@ fn new_config(root_path string, toml_config string) !Config {
 		env_map[k] = v.string()
 	}
 	default_capture := CaptureOptions{
-		method: capture_method
+		method:  capture_method
 		wait_ms: capture_wait_ms
-		flags: capture_flags
+		flags:   capture_flags
 		regions: capture_regions
-		env: env_map
+		env:     env_map
 	}
 
 	apps_any := doc.value('apps').default_to(empty_toml_array).array()
@@ -487,8 +487,10 @@ fn new_config(root_path string, toml_config string) !Config {
 
 		// Merge, per app, overwrites
 		mut merged_compare := CompareOptions{}
-		merged_compare.method = app_any.value('compare.method').default_to(default_compare.method).string()
-		merged_compare_flags := app_any.value('compare.flags').default_to(empty_toml_array).array().as_strings()
+		merged_compare.method =
+			app_any.value('compare.method').default_to(default_compare.method).string()
+		merged_compare_flags :=
+			app_any.value('compare.flags').default_to(empty_toml_array).array().as_strings()
 		if merged_compare_flags.len > 0 {
 			merged_compare.flags = merged_compare_flags
 		} else {
@@ -496,21 +498,24 @@ fn new_config(root_path string, toml_config string) !Config {
 		}
 
 		mut merged_capture := CaptureOptions{}
-		merged_capture.method = app_any.value('capture.method').default_to(default_capture.method).string()
-		merged_capture_flags := app_any.value('capture.flags').default_to(empty_toml_array).array().as_strings()
+		merged_capture.method =
+			app_any.value('capture.method').default_to(default_capture.method).string()
+		merged_capture_flags :=
+			app_any.value('capture.flags').default_to(empty_toml_array).array().as_strings()
 		if merged_capture_flags.len > 0 {
 			merged_capture.flags = merged_capture_flags
 		} else {
 			merged_capture.flags = default_capture.flags
 		}
 
-		app_capture_regions_any := app_any.value('capture.regions').default_to(empty_toml_array).array()
+		app_capture_regions_any :=
+			app_any.value('capture.regions').default_to(empty_toml_array).array()
 		mut app_capture_regions := []CaptureRegion{}
 		for capture_region_any in app_capture_regions_any {
 			region := CaptureRegion{
-				x: capture_region_any.value('x').default_to(0).int()
-				y: capture_region_any.value('y').default_to(0).int()
-				width: capture_region_any.value('width').default_to(0).int()
+				x:      capture_region_any.value('x').default_to(0).int()
+				y:      capture_region_any.value('y').default_to(0).int()
+				width:  capture_region_any.value('width').default_to(0).int()
 				height: capture_region_any.value('height').default_to(0).int()
 			}
 			app_capture_regions << region
@@ -528,7 +533,8 @@ fn new_config(root_path string, toml_config string) !Config {
 		}
 		merged_capture.regions = merged_capture_regions
 
-		merged_capture.wait_ms = app_any.value('capture.wait_ms').default_to(default_capture.wait_ms).int()
+		merged_capture.wait_ms =
+			app_any.value('capture.wait_ms').default_to(default_capture.wait_ms).int()
 		merge_capture_env := app_any.value('capture.env').default_to(empty_toml_map).as_map()
 		mut merge_env_map := default_capture.env.clone()
 		for k, v in merge_capture_env {
@@ -541,9 +547,9 @@ fn new_config(root_path string, toml_config string) !Config {
 		merged_capture.validate()!
 
 		app_config := AppConfig{
-			compare: merged_compare
-			capture: merged_capture
-			path: rel_path
+			compare:  merged_compare
+			capture:  merged_capture
+			path:     rel_path
 			abs_path: os.join_path(path, rel_path).trim_right('/')
 		}
 		apps << app_config

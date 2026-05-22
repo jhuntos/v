@@ -7,9 +7,15 @@ type Float = f32 | f64
 
 // Callback represents all the possible callbacks
 pub type Callback = ConnectedCallback // connected callback
+	| LoggedOnCallback // logged on callback
 	| DisconnectedCallback // disconnected callback
 	| LoggedOffCallback // logged off callback
-	| LoggedOnCallback // logged on callback
+
+type SumResp = string
+	| int
+	// | f64
+	| map[string]int
+	| map[string]bool
 
 struct ConnectedCallback {}
 

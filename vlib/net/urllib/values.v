@@ -1,9 +1,9 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module urllib
 
-struct QueryValue {
+pub struct QueryValue {
 pub mut:
 	key   string
 	value string
@@ -79,7 +79,7 @@ pub fn (mut v Values) set(key string, value string) {
 // values associated with key.
 pub fn (mut v Values) add(key string, value string) {
 	v.data << QueryValue{
-		key: key
+		key:   key
 		value: value
 	}
 	v.len = v.data.len

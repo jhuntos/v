@@ -1,21 +1,18 @@
 import time
 
-const (
-	time_to_test = time.Time{
-		year: 1980
-		month: 7
-		day: 11
-		hour: 21
-		minute: 23
-		second: 42
-		unix: 332198622
-	}
-)
+const time_to_test = time.Time{
+	year:   1980
+	month:  7
+	day:    11
+	hour:   21
+	minute: 23
+	second: 42
+}
 
 fn test_now_format() {
 	t := time.now()
-	u := t.unix
-	assert t.format() == time.unix(int(u)).format()
+	u := t.unix()
+	assert t.format() == time.unix(int(u)).utc_to_local().format()
 }
 
 fn test_format() {
@@ -87,4 +84,15 @@ fn test_get_fmt_str() {
 
 fn test_utc_string() {
 	assert 'Fri, 11 Jul 1980 21:23:42 UTC' == time_to_test.utc_string()
+}
+
+fn test_http_header_string() {
+	assert 'Fri, 11 Jul 1980 21:23:42 GMT' == time_to_test.http_header_string()
+}
+
+fn test_push_to_http_header() {
+	mut http1_1_buffer := 'HTTP/1.1 200 OK\r\nDate: '.bytes()
+	time_to_test.push_to_http_header(mut http1_1_buffer)
+
+	assert http1_1_buffer.bytestr() == 'HTTP/1.1 200 OK\r\nDate: Fri, 11 Jul 1980 21:23:42 GMT'
 }

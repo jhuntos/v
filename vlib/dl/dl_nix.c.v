@@ -6,20 +6,18 @@ $if linux {
 	#flag -ldl
 }
 
-pub const (
-	rtld_now      = C.RTLD_NOW
-	rtld_lazy     = C.RTLD_LAZY
-	rtld_global   = C.RTLD_GLOBAL
-	rtld_local    = C.RTLD_LOCAL
-	rtld_nodelete = C.RTLD_NODELETE
-	rtld_noload   = C.RTLD_NOLOAD
-)
+pub const rtld_now = C.RTLD_NOW
+pub const rtld_lazy = C.RTLD_LAZY
+pub const rtld_global = C.RTLD_GLOBAL
+pub const rtld_local = C.RTLD_LOCAL
+pub const rtld_nodelete = C.RTLD_NODELETE
+pub const rtld_noload = C.RTLD_NOLOAD
 
-fn C.dlopen(filename &char, flags int) voidptr
+fn C.dlopen(filename &char, flags i32) voidptr
 
 fn C.dlsym(handle voidptr, symbol &char) voidptr
 
-fn C.dlclose(handle voidptr) int
+fn C.dlclose(handle voidptr) i32
 
 fn C.dlerror() &char
 
@@ -38,10 +36,10 @@ pub fn sym(handle voidptr, symbol string) voidptr {
 	return C.dlsym(handle, &char(symbol.str))
 }
 
-// dlerror provides a text error diagnostic message for functions in `dl`
-// it returns a human-readable string, describing the most recent error
+// dlerror provides a text error diagnostic message for functions in `dl`.
+// It returns a human-readable string, describing the most recent error
 // that occurred from a call to one of the `dl` functions, since the last
-// call to dlerror()
+// call to dlerror().
 pub fn dlerror() string {
 	sptr := C.dlerror()
 	if sptr == unsafe { nil } {

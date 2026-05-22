@@ -17,35 +17,34 @@ const do_yaml_conversion = os.getenv('VTEST_TOML_DO_YAML_CONVERSION') == '1'
 // The actual tests and data can be obtained by doing:
 // `git clone --depth 1 https://github.com/iarna/toml-spec-tests.git vlib/toml/tests/testdata/iarna/toml-test`
 // See also the CI toml tests
-const (
-	// Kept for easier handling of future updates to the tests
-	valid_exceptions       = []string{}
-	invalid_exceptions     = []string{}
+// Kept for easier handling of future updates to the tests
+const valid_exceptions = []string{}
+const invalid_exceptions = []string{}
 
-	valid_value_exceptions = [
-		'values/spec-date-time-3.toml',
-		'values/spec-date-time-4.toml',
-		'values/spec-readme-example.toml',
-		'values/spec-date-time-6.toml',
-		'values/spec-date-time-5.toml',
-		'values/spec-date-time-1.toml',
-		'values/spec-date-time-2.toml',
-		'values/qa-table-inline-nested-1000.toml',
-		'values/qa-array-inline-nested-1000.toml',
-	]
+const valid_value_exceptions = [
+	'values/spec-date-time-3.toml',
+	'values/spec-date-time-4.toml',
+	'values/spec-readme-example.toml',
+	'values/spec-date-time-6.toml',
+	'values/spec-date-time-5.toml',
+	'values/spec-date-time-1.toml',
+	'values/spec-date-time-2.toml',
+	'values/qa-table-inline-nested-1000.toml',
+	'values/qa-array-inline-nested-1000.toml',
+]
 
-	yaml_value_exceptions  = [
-		'values/spec-float-5.toml', // YAML: "1e6", V: 1000000
-		'values/spec-float-9.toml', // YAML: "-0e0", V: 0
-		'values/spec-float-6.toml', // YAML: "-2E-2", V: -0.02
-		'values/spec-float-4.toml', // YAML: "5e+22", V: 50000000000000004000000
-	]
+const yaml_value_exceptions = [
+	'values/spec-float-5.toml', // YAML: "1e6", V: 1000000
+	'values/spec-float-9.toml', // YAML: "-0e0", V: 0
+	'values/spec-float-6.toml', // YAML: "-2E-2", V: -0.02
+	'values/spec-float-4.toml', // YAML: "5e+22", V: 50000000000000004000000
+]
 
-	jq                     = os.find_abs_path_of_executable('jq') or { '' }
-	python                 = os.find_abs_path_of_executable('python') or { '' }
-	compare_work_dir_root  = os.join_path(os.vtmp_dir(), 'v', 'toml', 'iarna')
-	// From: https://stackoverflow.com/a/38266731/1904615
-	jq_normalize           = r'# Apply f to composite entities recursively using keys[], and to atoms
+const jq = os.find_abs_path_of_executable('jq') or { '' }
+const python = os.find_abs_path_of_executable('python') or { '' }
+const compare_work_dir_root = os.join_path(os.vtmp_dir(), 'toml_iarna')
+// From: https://stackoverflow.com/a/38266731/1904615
+const jq_normalize = r'# Apply f to composite entities recursively using keys[], and to atoms
 def sorted_walk(f):
   . as $in
   | if type == "object" then
@@ -58,7 +57,6 @@ def sorted_walk(f):
 def normalize: sorted_walk(if type == "array" then sort else . end);
 
 normalize'
-)
 
 fn run(args []string) !string {
 	res := os.execute(args.join(' '))
@@ -71,14 +69,14 @@ fn run(args []string) !string {
 // test_iarna_toml_spec_tests run though 'testdata/iarna/toml-test/*' if found.
 fn test_iarna_toml_spec_tests() {
 	this_file := @FILE
-	test_root := os.join_path(os.dir(this_file), 'testdata', 'iarna', 'toml-test')
+	test_root := os.join_path(os.dir(this_file), 'testdata', 'iarna')
 	if os.is_dir(test_root) {
 		valid_test_files := os.walk_ext(os.join_path(test_root, 'values'), '.toml')
 		println('Testing ${valid_test_files.len} valid TOML files...')
 		mut valid := 0
 		mut e := 0
 		for i, valid_test_file in valid_test_files {
-			mut relative := valid_test_file.all_after('toml-test').trim_left(os.path_separator)
+			mut relative := valid_test_file.all_after('iarna').trim_left(os.path_separator)
 			$if windows {
 				relative = relative.replace('/', '\\')
 			}
@@ -122,7 +120,7 @@ fn test_iarna_toml_spec_tests() {
 			valid = 0
 			e = 0
 			for i, valid_test_file in valid_test_files {
-				mut relative := valid_test_file.all_after('toml-test').trim_left(os.path_separator)
+				mut relative := valid_test_file.all_after('iarna').trim_left(os.path_separator)
 				$if windows {
 					relative = relative.replace('/', '\\')
 				}
@@ -173,15 +171,16 @@ fn test_iarna_toml_spec_tests() {
 
 					iarna_yaml_path := valid_test_file.all_before_last('.') + '.yaml'
 					if os.exists(iarna_yaml_path) {
-						converted_json_path = os.join_path(compare_work_dir_root, '${valid_test_file_name}.yaml.json')
+						converted_json_path = os.join_path(compare_work_dir_root,
+							'${valid_test_file_name}.yaml.json')
 						run([python, '-c',
 							"'import sys, yaml, json; json.dump(yaml.load(sys.stdin, Loader=yaml.FullLoader), sys.stdout, indent=4)'",
 							'<', iarna_yaml_path, '>', converted_json_path]) or {
 							contents := os.read_file(iarna_yaml_path)!
-							// NOTE there's known errors with the python convertion method.
+							// NOTE there's known errors with the python convention method.
 							// For now we just ignore them as it's a broken tool - not a wrong test-case.
 							// Uncomment this print to see/check them.
-							// eprintln(err.msg() + '\n$contents')
+							// eprintln(err.msg() + '\n${contents}')
 							e++
 							println('ERR  [${i + 1}/${valid_test_files.len}] "${valid_test_file}" EXCEPTION [${e}/${valid_value_exceptions.len}]...')
 							continue
@@ -195,8 +194,10 @@ fn test_iarna_toml_spec_tests() {
 				}
 				toml_doc := toml.parse_file(valid_test_file)!
 
-				v_toml_json_path := os.join_path(compare_work_dir_root, '${valid_test_file_name}.v.json')
-				iarna_toml_json_path := os.join_path(compare_work_dir_root, '${valid_test_file_name}.json')
+				v_toml_json_path := os.join_path(compare_work_dir_root,
+					'${valid_test_file_name}.v.json')
+				iarna_toml_json_path := os.join_path(compare_work_dir_root,
+					'${valid_test_file_name}.json')
 
 				os.write_file(v_toml_json_path, to_iarna(toml_doc.ast.table, converted_from_yaml))!
 
@@ -231,7 +232,7 @@ fn test_iarna_toml_spec_tests() {
 		mut invalid := 0
 		e = 0
 		for i, invalid_test_file in invalid_test_files {
-			mut relative := invalid_test_file.all_after('toml-test').trim_left(os.path_separator)
+			mut relative := invalid_test_file.all_after('iarna').trim_left(os.path_separator)
 			$if windows {
 				relative = relative.replace('/', '\\')
 			}
@@ -294,8 +295,7 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 		}
 		ast.DateTime {
 			// Normalization for json
-			mut json_text := json2.Any(value.text).json_str().to_upper().replace(' ',
-				'T')
+			mut json_text := json2.Any(value.text).json_str().to_upper().replace(' ', 'T')
 			typ := if json_text.ends_with('Z"') || json_text.all_after('T').contains('-')
 				|| json_text.all_after('T').contains('+') {
 				'datetime'
@@ -304,7 +304,7 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 			}
 			// NOTE test suite inconsistency.
 			// It seems it's implementation specific how time and
-			// date-time values are represented in detail. For now we follow the BurntSushi format
+			// date-time values are represented in detail. For now we follow the toml-lang format
 			// that expands to 6 digits which is also a valid RFC 3339 representation.
 			json_text = to_iarna_time(json_text[1..json_text.len - 1])
 			if skip_value_map {
@@ -344,7 +344,8 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 		}
 		ast.Number {
 			if value.text.contains('inf') {
-				mut json_text := value.text.replace('inf', '1.7976931348623157e+308') // Inconsistency ???
+				mut json_text :=
+					value.text.replace('inf', '1.7976931348623157e+308') // Inconsistency ???
 				if skip_value_map {
 					return '${json_text}'
 				}
@@ -369,13 +370,6 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 				return '{ "type": "float", "value": "${val}" }'
 			}
 			v := value.i64()
-			// TODO workaround https://github.com/vlang/v/issues/9507
-			if v == i64(-9223372036854775807 - 1) {
-				if skip_value_map {
-					return '-9223372036854775808'
-				}
-				return '{ "type": "integer", "value": "-9223372036854775808" }'
-			}
 			if skip_value_map {
 				return '${v}'
 			}
@@ -401,5 +395,6 @@ fn to_iarna(value ast.Value, skip_value_map bool) string {
 			return str
 		}
 	}
+
 	return '<error>'
 }

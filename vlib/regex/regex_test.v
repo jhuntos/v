@@ -17,8 +17,7 @@ struct TestItem {
 }
 
 // vfmt off
-const(
-match_test_suite = [
+const match_test_suite = [
 	// minus in CC
 	TestItem{"d.def",r"abc.\.[\w\-]{,100}",-1,0},
 	TestItem{"abc12345.asd",r"abc.\.[\w\-]{,100}",-1,4},
@@ -181,8 +180,35 @@ match_test_suite = [
     TestItem{"ab.c", r"[^\s]*\.",0,3},
     TestItem{"ab c", r"[\S]+\s",0,3},
     TestItem{"ab c", r"[^\s]+\s",0,3},
+
+    // test last charr classes neg class
+    TestItem{"/a/", r"^/a/[^/]+$", -1,3},
+    TestItem{"/a/b",r"^/a/[^/]+$", 0,4},
+
+    // test `\0` as terminator
+    TestItem{"abc", "^abc\0$", -1,3},
+    TestItem{"abc\0", "^abc\0$", 0,4},
+
+    // test has `\0` chars
+    TestItem{"abcxyz", "^abc\0xyz$", -1,3},
+    TestItem{"abc\0xyz", "^abc\0xyz$", 0,7},
+
+    // test hex byte chars
+    TestItem{"abc_xyz", r"abc\x5Fxyz", 0,7},
+    TestItem{"abc_xyz", r"^abc\x5fxyz$", 0,7},
+    TestItem{"abcAxyz", r"^abc\x41xyz$", 0,7},
+    TestItem{"abcAAxyz", r"^abc\x41+xyz$", 0,8},
+    TestItem{"abcALxyz", r"^abc\x41\x4Cxyz$", 0,8},
+    TestItem{"abcAAxyz", r"^abc\X4141xyz$", 0,8},
+    TestItem{"abcALxyz", r"^abc\X414cxyz$", 0,8},
+    TestItem{"abcALxyz", r"^abc\X414Cxyz$", 0,8},
+    TestItem{"abcBxyz", r"^abc\x41+xyz$", -1,3},
+
+    // test anchor
+    TestItem{"abc", r"^abc$",0,3},
+    TestItem{"abc", r"^abc+$",0,3},
+    TestItem{"abcd", r"^abc+$",-1,0},
 ]
-)
 
 struct TestItemRe {
 	src string
@@ -191,8 +217,7 @@ struct TestItemRe {
 	r   string
 }
 
-const (
-match_test_suite_replace = [
+const match_test_suite_replace = [
 	// replace tests
 	TestItemRe{
 		"oggi pibao è andato a casa di pbababao ed ha trovato pibabababao",
@@ -226,7 +251,7 @@ match_test_suite_replace = [
 	},
 ]
 
-match_test_suite_replace_simple = [
+const match_test_suite_replace_simple = [
 	// replace tests
 	TestItemRe{
 		"oggi pibao è andato a casa di pbababao ed ha trovato pibabababao",
@@ -241,7 +266,6 @@ match_test_suite_replace_simple = [
 		"CIAO is a good day and CIAO will be for sure."
 	},
 ]
-)
 
 struct TestItemCGroup {
 	src string
@@ -252,8 +276,7 @@ struct TestItemCGroup {
 	cgn map[string]int
 }
 
-const (
-cgroups_test_suite = [
+const cgroups_test_suite = [
 	TestItemCGroup{
 		"http://www.ciao.mondo/hello/pippo12_/pera.html",
 		r"(?P<format>https?)|(?:ftps?)://(?P<token>[\w_]+[\.|/])+",0,42,
@@ -292,7 +315,6 @@ cgroups_test_suite = [
 		map[string]int{}
 	},
 ]
-)
 
 struct Test_find_all {
 	src     string
@@ -301,8 +323,7 @@ struct Test_find_all {
 	res_str []string // ['find0','find1'...]
 }
 
-const (
-find_all_test_suite = [
+const find_all_test_suite = [
 	Test_find_all{
 		"abcd 1234 efgh 1234 ghkl1234 ab34546df",
 		r"\d+",
@@ -378,8 +399,8 @@ find_all_test_suite = [
 	Test_find_all{
 		"ab",
 		r"[^\n]*",
-		[0, 2],
-		['ab']
+		[0, 2, 2, 2],
+		['ab', '']
 	},
 	Test_find_all{
 		"ab",
@@ -390,12 +411,23 @@ find_all_test_suite = [
 	Test_find_all{
 		"ab",
 		r"([^\n]|a)*",
-		[0, 2],
-		['ab']
+		[0, 2, 2, 2],
+		['ab', '']
+	},
+	Test_find_all{
+		"",
+		r"a*",
+		[0, 0],
+		['']
+	},
+	Test_find_all{
+		"b",
+		r"a*",
+		[0, 0, 1, 1],
+		['', '']
 	}
-
 ]
-)
+
 
 struct Test_split {
 	src string
@@ -403,18 +435,17 @@ struct Test_split {
 	res []string // ['abc','def',...]
 }
 
-const (
-	split_test_suite = [
+const split_test_suite = [
 		Test_split{'abcd 1234 efgh 1234 ghkl1234 ab34546df', r'\d+', ['abcd ', ' efgh ', ' ghkl',
 			' ab', 'df']},
-		Test_split{'abcd 1234 efgh 1234 ghkl1234 ab34546df', r'\a+', [' 1234 ', ' 1234 ', '1234 ',
-			'34546']},
+		Test_split{'abcd 1234 efgh 1234 ghkl1234 ab34546df', r'\a+', ['', ' 1234 ', ' 1234 ', '1234 ',
+			'34546', '']},
 		Test_split{'oggi pippo è andato a casa di pluto ed ha trovato pippo', r'p[iplut]+o', [
-			'oggi ', ' è andato a casa di ', ' ed ha trovato ']},
+			'oggi ', ' è andato a casa di ', ' ed ha trovato ', '']},
 		Test_split{'oggi pibao è andato a casa di pbababao ed ha trovato pibabababao', r'(pi?(ba)+o)', [
-			'oggi ', ' è andato a casa di ', ' ed ha trovato ']},
+			'oggi ', ' è andato a casa di ', ' ed ha trovato ', '']},
 		Test_split{'Today is a good day and tomorrow will be for sure.', r'[Tt]o\w+', [
-			' is a good day and ', ' will be for sure.']},
+			'', ' is a good day and ', ' will be for sure.']},
 		Test_split{'pera\nurl = https://github.com/dario/pig.html\npippo', r'url *= *https?://[\w./]+', [
 			'pera\n', '\npippo']},
 		Test_split{'pera\nurl = https://github.com/dario/pig.html\npippo', r'url *= *https?://.*' +
@@ -422,16 +453,17 @@ const (
 		Test_split{'#.#......##.#..#..##........##....###...##...######.......#.....#..#......#...#........###.#..#.', r'#[.#]{4}##[.#]{4}##[.#]{4}###', [
 			'#.#......##.#..#..##........#', '##.......#.....#..#......#...#........###.#..#.']},
 		Test_split{'#.#......##.#..#..##........##....###...##...######.......#.....#..#......#...#........###.#..#.', r'.*#[.#]{4}##[.#]{4}##[.#]{4}###', [
-			'##.......#.....#..#......#...#........###.#..#.']},
-		Test_split{'1234 Aa dddd Aaf 12334 Aa opopo Aaf', r'Aa.+Aaf', ['1234 ', ' 12334 ']},
+			'', '##.......#.....#..#......#...#........###.#..#.']},
+		Test_split{'1234 Aa dddd Aaf 12334 Aa opopo Aaf', r'Aa.+Aaf', ['1234 ', ' 12334 ', '']},
 		Test_split{'@for something @endfor @for something else @endfor altro testo @for body @endfor uno due @for senza dire più @endfor pippo', r'@for.+@endfor', [
-			' ', ' altro testo ', ' uno due ', ' pippo']},
+			'', ' ', ' altro testo ', ' uno due ', ' pippo']},
 		Test_split{'+++pippo+++\n elvo +++ pippo2 +++ +++ oggi+++', r'\+{3}.*\+{3}', [
-			'\n elvo ', ' ']},
+			'', '\n elvo ', ' ', '']},
 		Test_split{'foobar', r'\d', ['foobar']},
-		Test_split{'1234', r'\d+', []},
+		Test_split{'1234', r'\d+', ['', '']},
+		Test_split{'a-', r'-', ['a', '']},
+		Test_split{'-a', r'-', ['', 'a']},
 	]
-)
 // vfmt on
 
 fn test_regex() {
@@ -630,7 +662,7 @@ fn test_regex() {
 				continue
 			}
 			// q_str := re.get_query()
-			// eprintln("Query: $q_str")
+			// eprintln("Query: ${q_str}")
 			start, end := re.find(to.src)
 
 			if start != to.s || end != to.e {
@@ -639,7 +671,7 @@ fn test_regex() {
 				assert false
 			} else {
 				// tmp_str := text[start..end]
-				// println("found in [$start, $end] => [$tmp_str]")
+				// println("found in [${start}, ${end}] => [${tmp_str}]")
 				assert true
 			}
 			continue
@@ -654,7 +686,7 @@ fn test_regex() {
 			assert false
 			continue
 		}
-		// println("#$c [$to.src] q[$to.q]")
+		// println("#${c} [${to.src}] q[${to.q}]")
 		start, end := re.match_string(to.src)
 
 		mut tmp_str := ''
@@ -689,6 +721,54 @@ fn test_regex() {
 	if debug {
 		println('DONE!')
 	}
+}
+
+fn test_zero_length_find_matches() {
+	mut re := regex.regex_opt(r'a*') or { panic(err) }
+	start_1, end_1 := re.match_string('')
+	assert start_1 == 0
+	assert end_1 == 0
+	start_2, end_2 := re.match_string('b')
+	assert start_2 == 0
+	assert end_2 == 0
+	start_3, end_3 := re.find('')
+	assert start_3 == 0
+	assert end_3 == 0
+	start_4, end_4 := re.find('b')
+	assert start_4 == 0
+	assert end_4 == 0
+	start_5, end_5 := re.find_from('b', 1)
+	assert start_5 == 1
+	assert end_5 == 1
+	assert re.find_all('') == [0, 0]
+	assert re.find_all('b') == [0, 0, 1, 1]
+	assert re.find_all_str('') == ['']
+	assert re.find_all_str('b') == ['', '']
+}
+
+fn test_case_insensitive_flag() {
+	mut re := regex.regex_opt(r'hello') or { panic(err) }
+	re.flag |= regex.f_ci
+	start1, end1 := re.match_string('HeLLo')
+	assert start1 == 0
+	assert end1 == 5
+
+	mut class_re := regex.regex_opt(r'^[A-Z]+$') or { panic(err) }
+	class_re.flag |= regex.f_ci
+	start2, end2 := class_re.match_string('abcXYZ')
+	assert start2 == 0
+	assert end2 == 6
+
+	mut neg_class_re := regex.regex_opt(r'^[^a]+$') or { panic(err) }
+	neg_class_re.flag |= regex.f_ci
+	start3, _ := neg_class_re.match_string('A')
+	assert start3 == -1
+
+	mut validator_re := regex.regex_opt(r'^\a+$') or { panic(err) }
+	validator_re.flag |= regex.f_ci
+	start4, end4 := validator_re.match_string('AbC')
+	assert start4 == 0
+	assert end4 == 3
 }
 
 // test regex_base function
@@ -772,17 +852,15 @@ fn rest_regex_replace_n() {
 }
 
 // test quantifier wrong sequences
-const (
-	test_quantifier_sequences_list = [
-		r'+{3}.*+{3}',
-		r'+{3}.*?{3}',
-		r'+{3}.**{3}',
-		r'+{3}.*\+{3}*',
-		r'+{3}.*\+{3}+',
-		r'+{3}.*\+{3}??',
-		r'+{3}.*\+{3}{4}',
-	]
-)
+const test_quantifier_sequences_list = [
+	r'+{3}.*+{3}',
+	r'+{3}.*?{3}',
+	r'+{3}.**{3}',
+	r'+{3}.*\+{3}*',
+	r'+{3}.*\+{3}+',
+	r'+{3}.*\+{3}??',
+	r'+{3}.*\+{3}{4}',
+]
 
 fn test_quantifier_sequences() {
 	for pattern in test_quantifier_sequences_list {
@@ -804,8 +882,7 @@ struct Test_find_groups {
 }
 
 // vfmt off
-const (
-find_groups_test_suite = [
+const find_groups_test_suite = [
 	Test_find_groups{
 		"aabbbccccdd",
 		r"(b+)(c+)",
@@ -828,7 +905,6 @@ find_groups_test_suite = [
 		[2, 9, 2, 5, 9, 11],
 	},
 ]
-)
 // vfmt on
 
 fn test_groups_in_find() {
@@ -859,11 +935,9 @@ fn test_groups_in_find() {
 	}
 }
 
-const (
-	err_query_list = [
-		r'([a]|[b])*',
-	]
-)
+const err_query_list = [
+	r'([a]|[b])*',
+]
 
 fn test_errors() {
 	mut count := 0
@@ -895,7 +969,7 @@ fn test_long_query() {
 	// test 1
 	mut re := regex.regex_opt(query) or { panic(err) }
 	mut start, mut end := re.match_string(base_string)
-	// println("$start, $end")
+	// println("${start}, ${end}")
 	assert start >= 0 && end == base_string.len
 
 	// test 2
@@ -910,7 +984,7 @@ fn test_long_query() {
 	query = buf.str()
 	re = regex.regex_opt(query) or { panic(err) }
 	start, end = re.match_string(base_string)
-	// println("$start, $end")
+	// println("${start}, ${end}")
 	assert start >= 0 && end == base_string.len
 }
 
@@ -919,16 +993,14 @@ struct Test_negation_group {
 	res bool
 }
 
-const (
-	negation_groups = [
-		Test_negation_group{'automobile', false},
-		Test_negation_group{'botomobile', true},
-		Test_negation_group{'auto_caravan', false},
-		Test_negation_group{'moto_mobile', true},
-		Test_negation_group{'pippole', true},
-		Test_negation_group{'boring test', false},
-	]
-)
+const negation_groups = [
+	Test_negation_group{'automobile', false},
+	Test_negation_group{'botomobile', true},
+	Test_negation_group{'auto_caravan', false},
+	Test_negation_group{'moto_mobile', true},
+	Test_negation_group{'pippole', true},
+	Test_negation_group{'boring test', false},
+]
 
 fn test_negation_groups() {
 	mut query := r'(?!auto)\w+le'

@@ -1,9 +1,7 @@
 import os
 import v.vcache
 
-const (
-	vcache_folder = os.join_path(os.vtmp_dir(), 'v', 'cache_folder')
-)
+const vcache_folder = os.join_path(os.vtmp_dir(), 'cache_folder')
 
 fn check_cache_entry_fpath_invariants(x string, extension string) {
 	a := x.replace(vcache_folder + os.path_separator, '').split(os.path_separator)
@@ -16,7 +14,7 @@ fn check_cache_entry_fpath_invariants(x string, extension string) {
 
 fn testsuite_begin() {
 	os.setenv('VCACHE', vcache_folder, true)
-	// eprintln('testsuite_begin, vcache_folder = $vcache_folder')
+	// eprintln('testsuite_begin, vcache_folder = ${vcache_folder}')
 	os.rmdir_all(vcache_folder) or {}
 	vcache.new_cache_manager([])
 	assert os.is_dir(vcache_folder)
@@ -55,31 +53,39 @@ fn test_different_options_should_produce_different_cache_entries_for_same_key_an
 fn test_exists() {
 	mut cm := vcache.new_cache_manager([])
 	cm.exists('.o', 'abc') or { assert true }
-	//
+
 	x := cm.save('.x', 'abc', '') or {
 		assert false
 		''
 	}
 	cm.exists('.o', 'abc') or { assert true }
-	//
+
 	y := cm.save('.o', 'zbc', '') or {
 		assert false
 		''
 	}
 	cm.exists('.o', 'abc') or { assert true }
-	//
+
 	z := cm.save('.o', 'abc', '') or {
 		assert false
 		''
 	}
 	cm.exists('.o', 'abc') or { assert false }
-	//
+
 	assert os.is_file(x)
 	assert os.is_file(y)
 	assert os.is_file(z)
 	assert x != y
 	assert x != z
 	assert y != z
+}
+
+fn test_temporary_options_reset_cached_key_paths() {
+	mut cm := vcache.new_cache_manager(['-os freebsd'])
+	path_before := cm.mod_postfix_with_key2cpath('builtin', '.o', '/tmp/gc.o')
+	cm.set_temporary_options(['-target x86_64-unknown-freebsd14.0'])
+	path_after := cm.mod_postfix_with_key2cpath('builtin', '.o', '/tmp/gc.o')
+	assert path_before != path_after
 }
 
 fn test_readme_exists_and_is_readable() {

@@ -32,87 +32,271 @@ pub fn decode[T](toml_txt string) !T {
 
 fn decode_struct[T](doc Any, mut typ T) {
 	$for field in T.fields {
-		value := doc.value(field.name)
-		$if field.is_enum {
-			typ.$(field.name) = value.int()
-		} $else $if field.typ is string {
-			typ.$(field.name) = value.string()
-		} $else $if field.typ is bool {
-			typ.$(field.name) = value.bool()
-		} $else $if field.typ is int {
-			typ.$(field.name) = value.int()
-		} $else $if field.typ is i64 {
-			typ.$(field.name) = value.i64()
-		} $else $if field.typ is u64 {
-			typ.$(field.name) = value.u64()
-		} $else $if field.typ is f32 {
-			typ.$(field.name) = value.f32()
-		} $else $if field.typ is f64 {
-			typ.$(field.name) = value.f64()
-		} $else $if field.typ is DateTime {
-			typ.$(field.name) = value.datetime()
-		} $else $if field.typ is Date {
-			typ.$(field.name) = value.date()
-		} $else $if field.typ is Time {
-			typ.$(field.name) = value.time()
-		} $else $if field.is_array {
-			arr := value.array()
-			match typeof(typ.$(field.name)).name {
-				'[]string' { typ.$(field.name) = arr.as_strings() }
-				'[]int' { typ.$(field.name) = arr.map(it.int()) }
-				'[]i64' { typ.$(field.name) = arr.map(it.i64()) }
-				'[]u64' { typ.$(field.name) = arr.map(it.u64()) }
-				'[]f32' { typ.$(field.name) = arr.map(it.f32()) }
-				'[]f64' { typ.$(field.name) = arr.map(it.f64()) }
-				'[]bool' { typ.$(field.name) = arr.map(it.bool()) }
-				'[]toml.DateTime' { typ.$(field.name) = arr.map(it.datetime()) }
-				'[]toml.Date' { typ.$(field.name) = arr.map(it.date()) }
-				'[]toml.Time' { typ.$(field.name) = arr.map(it.time()) }
-				else {}
+		mut field_name := field.name
+		mut skip := false
+		for attr in field.attrs {
+			if attr == 'skip' {
+				skip = true
+				break
 			}
-		} $else $if field.is_struct {
-			mut s := typ.$(field.name)
-			decode_struct(value, mut s)
-			typ.$(field.name) = s
+			if attr.starts_with('toml:') {
+				field_name = attr.all_after(':').trim_space()
+			}
 		}
+		value := doc.value(field_name)
+		// only set the field's value when value != null and !skip, else field got it's default value
+		if !skip && value != null {
+			$if field.is_enum {
+				typ.$(field.name) = value.int()
+			} $else $if field.typ is string {
+				typ.$(field.name) = value.string()
+			} $else $if field.typ is bool {
+				typ.$(field.name) = value.bool()
+			} $else $if field.typ is int {
+				typ.$(field.name) = value.int()
+			} $else $if field.typ is i64 {
+				typ.$(field.name) = value.i64()
+			} $else $if field.typ is u64 {
+				typ.$(field.name) = value.u64()
+			} $else $if field.typ is f32 {
+				typ.$(field.name) = value.f32()
+			} $else $if field.typ is f64 {
+				typ.$(field.name) = value.f64()
+			} $else $if field.typ is DateTime {
+				typ.$(field.name) = value.datetime()
+			} $else $if field.typ is Date {
+				typ.$(field.name) = value.date()
+			} $else $if field.typ is Time {
+				typ.$(field.name) = value.time()
+			} $else $if field.typ is Any {
+				typ.$(field.name) = value
+			} $else $if field.is_array {
+				typ.$(field.name) = decode_array(typ.$(field.name), value.array())
+			} $else $if field.is_map {
+				typ.$(field.name) = decode_map(typ.$(field.name), value.as_map())
+			} $else $if field.is_struct {
+				mut s := typ.$(field.name)
+				decode_struct(value, mut s)
+				typ.$(field.name) = s
+			}
+		}
+	}
+}
+
+fn decode_array[T](current []T, values []Any) []T {
+	$if T is string {
+		return values.map(it.string())
+	} $else $if T is bool {
+		return values.map(it.bool())
+	} $else $if T is int {
+		return values.map(it.int())
+	} $else $if T is i64 {
+		return values.map(it.i64())
+	} $else $if T is u64 {
+		return values.map(it.u64())
+	} $else $if T is f32 {
+		return values.map(it.f32())
+	} $else $if T is f64 {
+		return values.map(it.f64())
+	} $else $if T is DateTime {
+		return values.map(it.datetime())
+	} $else $if T is Date {
+		return values.map(it.date())
+	} $else $if T is Time {
+		return values.map(it.time())
+	} $else $if T is Any {
+		return values
+	} $else $if T is $struct {
+		mut decoded := []T{cap: values.len}
+		for value in values {
+			if value is map[string]Any {
+				mut item := T{}
+				decode_struct(value, mut item)
+				decoded << item
+			}
+		}
+		return decoded
+	} $else {
+		return current
+	}
+}
+
+fn decode_map[T](current map[string]T, values map[string]Any) map[string]T {
+	$if T is string {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.string()
+		}
+		return decoded
+	} $else $if T is bool {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.bool()
+		}
+		return decoded
+	} $else $if T is int {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.int()
+		}
+		return decoded
+	} $else $if T is i64 {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.i64()
+		}
+		return decoded
+	} $else $if T is u64 {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.u64()
+		}
+		return decoded
+	} $else $if T is f32 {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.f32()
+		}
+		return decoded
+	} $else $if T is f64 {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.f64()
+		}
+		return decoded
+	} $else $if T is DateTime {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.datetime()
+		}
+		return decoded
+	} $else $if T is Date {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.date()
+		}
+		return decoded
+	} $else $if T is Time {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			decoded[key] = value.time()
+		}
+		return decoded
+	} $else $if T is Any {
+		return values.clone()
+	} $else $if T is $struct {
+		mut decoded := map[string]T{}
+		for key, value in values {
+			if value is map[string]Any {
+				mut item := T{}
+				decode_struct(value, mut item)
+				decoded[key] = item
+			}
+		}
+		return decoded
+	} $else {
+		return current
 	}
 }
 
 // encode encodes the type `T` into a TOML string.
 // If `T` has a custom `.to_toml()` method, it will be used instead of the default.
 pub fn encode[T](typ T) string {
-	$for method in T.methods {
-		$if method.name == 'to_toml' {
-			return typ.$method()
+	$if T is $struct {
+		$for method in T.methods {
+			$if method.name == 'to_toml' {
+				return typ.$method()
+			}
 		}
+		mp := encode_struct[T](typ)
+		return mp.to_toml()
+	} $else {
+		$compile_error('Currently only type `struct` is supported for `T` to encode as TOML')
 	}
-	mp := encode_struct[T](typ)
-	return mp.to_toml()
+	return ''
 }
 
 fn encode_struct[T](typ T) map[string]Any {
 	mut mp := map[string]Any{}
 	$for field in T.fields {
-		value := typ.$(field.name)
-		$if field.is_enum {
-			mp[field.name] = Any(int(value))
-		} $else $if field.is_struct {
-			mp[field.name] = encode_struct(value)
-		} $else $if field.is_array {
-			mut arr := []Any{}
-			for v in value {
-				arr << Any(v)
+		mut skip := false
+		mut field_name := field.name
+		for attr in field.attrs {
+			if attr == 'skip' {
+				skip = true
+				break
 			}
-			mp[field.name] = arr
-		} $else {
-			mp[field.name] = Any(value)
+			if attr.starts_with('toml:') {
+				field_name = attr.all_after(':').trim_space()
+			}
+		}
+		if !skip {
+			mp[field_name] = to_any(typ.$(field.name))
 		}
 	}
 	return mp
 }
 
+fn voidptr_to_toml_string[T](value T) string {
+	ptr := unsafe { voidptr(&value) }
+	return unsafe { '0x${ptr_str(*(&voidptr(ptr)))}' }
+}
+
+fn to_any[T](value T) Any {
+	$if T is $enum {
+		return Any(int(value))
+	} $else $if T is Date {
+		return Any(value)
+	} $else $if T is Time {
+		return Any(value)
+	} $else $if T is Null {
+		return Any(value)
+	} $else $if T is bool {
+		return Any(value)
+	} $else $if T is f32 {
+		return Any(value)
+	} $else $if T is f64 {
+		return Any(value)
+	} $else $if T is i64 {
+		return Any(value)
+	} $else $if T is int {
+		return Any(value)
+	} $else $if T is u64 {
+		return Any(value)
+	} $else $if T is DateTime {
+		return Any(value)
+	} $else $if T is Any {
+		return value
+	} $else $if T is $struct {
+		$for method in T.methods {
+			$if method.name == 'to_toml' {
+				return Any(value.$method())
+			}
+		}
+		return encode_struct(value)
+	} $else $if T is $array {
+		mut arr := []Any{cap: value.len}
+		for v in value {
+			arr << to_any(v)
+		}
+		return arr
+	} $else $if T is $map {
+		mut mmap := map[string]Any{}
+		for key, val in value {
+			mmap['${key}'] = to_any(val)
+		}
+		return mmap
+	} $else {
+		if typeof(value).name == 'voidptr' {
+			return Any(voidptr_to_toml_string(value))
+		}
+		return Any('${value}')
+	}
+}
+
 // DateTime is the representation of an RFC 3339 datetime string.
 pub struct DateTime {
+pub:
 	datetime string
 }
 
@@ -123,6 +307,7 @@ pub fn (dt DateTime) str() string {
 
 // Date is the representation of an RFC 3339 date-only string.
 pub struct Date {
+pub:
 	date string
 }
 
@@ -133,6 +318,7 @@ pub fn (d Date) str() string {
 
 // Time is the representation of an RFC 3339 time-only string.
 pub struct Time {
+pub:
 	time string
 }
 
@@ -279,7 +465,7 @@ pub fn (d Doc) reflect[T]() T {
 // quoted keys are supported as `a."b.c"` or `a.'b.c'`.
 // Arrays can be queried with `a[0].b[1].[2]`.
 pub fn (d Doc) value(key string) Any {
-	key_split := parse_dotted_key(key) or { return toml.null }
+	key_split := parse_dotted_key(key) or { return null }
 	return d.value_(d.ast.table, key_split)
 }
 
@@ -299,21 +485,21 @@ pub fn (d Doc) value_opt(key string) !Any {
 // value_ returns the value found at `key` in the map `values` as `Any` type.
 fn (d Doc) value_(value ast.Value, key []string) Any {
 	if key.len == 0 {
-		return toml.null
+		return null
 	}
 	mut ast_value := ast.Value(ast.Null{})
 	k, index := parse_array_key(key[0])
 
 	if k == '' {
 		a := value as []ast.Value
-		ast_value = a[index] or { return toml.null }
+		ast_value = a[index] or { return null }
 	}
 
 	if value is map[string]ast.Value {
-		ast_value = value[k] or { return toml.null }
+		ast_value = value[k] or { return null }
 		if index > -1 {
 			a := ast_value as []ast.Value
-			ast_value = a[index] or { return toml.null }
+			ast_value = a[index] or { return null }
 		}
 	}
 
@@ -332,18 +518,22 @@ fn (d Doc) value_(value ast.Value, key []string) Any {
 
 // ast_to_any converts `from` ast.Value to toml.Any value.
 pub fn ast_to_any(value ast.Value) Any {
+	return ast_to_any_(value)
+}
+
+fn ast_to_any_(value ast.Value) Any {
 	match value {
 		ast.Date {
-			return Any(Date{value.text})
+			return Any(Date{value.text.clone()})
 		}
 		ast.Time {
-			return Any(Time{value.text})
+			return Any(Time{value.text.clone()})
 		}
 		ast.DateTime {
-			return Any(DateTime{value.text})
+			return Any(DateTime{value.text.clone()})
 		}
 		ast.Quoted {
-			return Any(value.text)
+			return Any(value.text.clone())
 		}
 		ast.Number {
 			val_text := value.text
@@ -367,7 +557,7 @@ pub fn ast_to_any(value ast.Value) Any {
 			return Any(value.i64())
 		}
 		ast.Bool {
-			str := (value as ast.Bool).text
+			str := value.text
 			if str == 'true' {
 				return Any(true)
 			}
@@ -377,26 +567,28 @@ pub fn ast_to_any(value ast.Value) Any {
 			m := (value as map[string]ast.Value)
 			mut am := map[string]Any{}
 			for k, v in m {
-				am[k] = ast_to_any(v)
+				converted := ast_to_any_(v)
+				am[k] = converted
 			}
 			return am
 			// return d.get_map_value(m, key_split[1..].join('.'))
 		}
 		[]ast.Value {
 			a := (value as []ast.Value)
-			mut aa := []Any{}
+			mut aa := []Any{cap: a.len}
 			for val in a {
-				aa << ast_to_any(val)
+				converted := ast_to_any_(val)
+				aa << converted
 			}
 			return aa
 		}
 		else {
-			return toml.null
+			return null
 		}
 	}
 
-	return toml.null
-	// TODO decide this
-	// panic(@MOD + '.' + @STRUCT + '.' + @FN + ' can\'t convert "$value"')
+	return null
+	// TODO: decide this
+	// panic(@MOD + '.' + @STRUCT + '.' + @FN + ' can\'t convert "${value}"')
 	// return Any('')
 }

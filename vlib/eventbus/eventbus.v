@@ -12,12 +12,12 @@ mut:
 	registry &Registry[T] = unsafe { nil }
 }
 
-struct Registry[T] {
+pub struct Registry[T] {
 mut:
 	events []EventHandler[T]
 }
 
-struct EventHandler[T] {
+pub struct EventHandler[T] {
 	name     T
 	handler  EventHandlerFn = unsafe { nil }
 	receiver voidptr        = unsafe { nil }
@@ -47,13 +47,13 @@ pub fn new[T]() &EventBus[T] {
 	return &EventBus[T]{registry, &Publisher[T]{registry}, &Subscriber[T]{registry}}
 }
 
-// publish publish an event with provided Params & name.
+// publish publishes an event with provided Params & name.
 pub fn (eb &EventBus[T]) publish(name T, sender voidptr, args voidptr) {
 	mut publisher := eb.publisher
 	publisher.publish(name, sender, args)
 }
 
-// clear_all clear all subscribers.
+// clear_all clears all subscribers.
 pub fn (eb &EventBus[T]) clear_all() {
 	mut publisher := eb.publisher
 	publisher.clear_all()
@@ -64,14 +64,31 @@ pub fn (eb &EventBus[T]) has_subscriber(name T) bool {
 	return eb.registry.check_subscriber(name)
 }
 
-// publish publish an event with provided Params & name.
+const dedup_buffer_len = 20
+
+// publish an event with provided Params & name.
 fn (mut pb Publisher[T]) publish(name T, sender voidptr, args voidptr) {
+	// println('Publisher.publish(name=${name} sender=${sender} args=${args})')
+	invalid := 0
+	mut handled_receivers := unsafe { [dedup_buffer_len]voidptr{init: &invalid} } // handle duplicate bugs TODO fix properly + perf
+	mut j := 0
+	mut found_onces := 0
 	for event in pb.registry.events {
 		if event.name == name {
+			if event.once {
+				found_onces++
+			}
+			if event.receiver in handled_receivers {
+				continue
+			}
 			event.handler(event.receiver, args, sender)
+			handled_receivers[j] = event.receiver
+			j = (j + 1) % dedup_buffer_len
 		}
 	}
-	pb.registry.events = pb.registry.events.filter(!(it.name == name && it.once))
+	if found_onces > 0 {
+		pb.registry.events = pb.registry.events.filter(!(it.name == name && it.once))
+	}
 }
 
 // clear_all clear all subscribers.
@@ -82,7 +99,7 @@ fn (mut p Publisher[T]) clear_all() {
 // subscribe subscribe to an event `name`.
 pub fn (mut s Subscriber[T]) subscribe(name T, handler EventHandlerFn) {
 	s.registry.events << EventHandler[T]{
-		name: name
+		name:    name
 		handler: handler
 	}
 }
@@ -90,8 +107,8 @@ pub fn (mut s Subscriber[T]) subscribe(name T, handler EventHandlerFn) {
 // subscribe_method subscribe to an event `name` and also set the `receiver` as a parameter.
 pub fn (mut s Subscriber[T]) subscribe_method(name T, handler EventHandlerFn, receiver voidptr) {
 	s.registry.events << EventHandler[T]{
-		name: name
-		handler: handler
+		name:     name
+		handler:  handler
 		receiver: receiver
 	}
 }
@@ -109,9 +126,9 @@ pub fn (mut s Subscriber[T]) unsubscribe_receiver(receiver voidptr) {
 // subscribe_once subscribe only once to an event `name`.
 pub fn (mut s Subscriber[T]) subscribe_once(name T, handler EventHandlerFn) {
 	s.registry.events << EventHandler[T]{
-		name: name
+		name:    name
 		handler: handler
-		once: true
+		once:    true
 	}
 }
 

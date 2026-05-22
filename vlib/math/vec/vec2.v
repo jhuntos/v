@@ -1,10 +1,10 @@
-// Copyright(C) 2020-2022 Lars Pontoppidan. All rights reserved.
+// Copyright(C) 2020-2024 Lars Pontoppidan. All rights reserved.
 // Use of this source code is governed by an MIT license file distributed with this software package
 module vec
 
 import math
 
-pub const vec_epsilon = f32(10e-7)
+pub const vec_epsilon = 10e-7
 
 // Vec2[T] is a generic struct representing a vector in 2D space.
 pub struct Vec2[T] {
@@ -71,7 +71,7 @@ pub fn (v Vec2[T]) as_vec4[T]() Vec4[T] {
 //
 
 // + returns the resulting vector of the addition of `v` and `u`.
-[inline]
+@[inline]
 pub fn (v Vec2[T]) + (u Vec2[T]) Vec2[T] {
 	return Vec2[T]{v.x + u.x, v.y + u.y}
 }
@@ -103,7 +103,7 @@ pub fn (mut v Vec2[T]) plus_scalar[U](scalar U) {
 //
 
 // - returns the resulting vector of the subtraction of `v` and `u`.
-[inline]
+@[inline]
 pub fn (v Vec2[T]) - (u Vec2[T]) Vec2[T] {
 	return Vec2[T]{v.x - u.x, v.y - u.y}
 }
@@ -135,7 +135,7 @@ pub fn (mut v Vec2[T]) subtract_scalar[U](scalar U) {
 //
 
 // * returns the resulting vector of the multiplication of `v` and `u`.
-[inline]
+@[inline]
 pub fn (v Vec2[T]) * (u Vec2[T]) Vec2[T] {
 	return Vec2[T]{v.x * u.x, v.y * u.y}
 }
@@ -167,7 +167,7 @@ pub fn (mut v Vec2[T]) multiply_scalar[U](scalar U) {
 //
 
 // / returns the resulting vector of the division of `v` and `u`.
-[inline]
+@[inline]
 pub fn (v Vec2[T]) / (u Vec2[T]) Vec2[T] {
 	return Vec2[T]{v.x / u.x, v.y / u.y}
 }
@@ -221,6 +221,17 @@ pub fn (v Vec2[T]) magnitude_y() T {
 }
 
 // dot returns the dot product of `v` and `u`.
+// The dot product is a scalar value that represents the magnitude of one vector
+// projected onto another vector.
+// It is calculated by multiplying the corresponding components of the vectors
+// and summing the results.
+// example:
+// ```v
+// v := vec2[f32](3, 4) //magnitude = 5
+// u := vec2[f32](5, 6) //magnitude = 7.81
+// dot := v.dot(u) // 3*5 + 4*6 = 15 + 24 = 39
+// 	(dot) // Output: 39
+// ```
 pub fn (v Vec2[T]) dot(u Vec2[T]) T {
 	return (v.x * u.x) + (v.y * u.y)
 }
@@ -247,26 +258,56 @@ pub fn (v Vec2[T]) perp_ccw() Vec2[T] {
 	return Vec2[T]{-v.y, v.x}
 }
 
-// perpendicular returns the `u` projected perpendicular vector to this vector.
+// perpendicular returns the `v` projected perpendicular vector to the 'u' vector.
 pub fn (v Vec2[T]) perpendicular(u Vec2[T]) Vec2[T] {
 	return v - v.project(u)
 }
 
 // project returns the projected vector.
+// The projection of vector `v` onto vector `u` is the orthogonal projection
+// of `v` onto a straight line parallel to `u` that passes through the origin.
+// This is equivalent to the vector projection of `v` onto the unit vector in the direction of `u`.
+// and is given by the formula: proj_v(u) = (v · u / |u|^2) * u
+// where "·" denotes the dot product and |u| is the magnitude of vector `u`.
+// If `v` is a zero vector, the result will also be a zero vector.
+// example:
+// ```v
+// v := vec2[f32](3, 4)
+// u := vec2[f32](5, 6)
+// proj := v.project(u)
+// println(proj) // Output: vec2[f32](3.1967213, 3.8360658)
+// ```
 pub fn (v Vec2[T]) project(u Vec2[T]) Vec2[T] {
-	percent := v.dot(u) / u.dot(v)
-	return u.mul_scalar(percent)
+	scale := T(v.dot(u) / u.dot(u))
+	return u.mul_scalar(scale)
+}
+
+// rotate_around_cw returns the vector `v` rotated *clockwise* `radians` around an origin vector `o` in Cartesian space.
+pub fn (v Vec2[T]) rotate_around_cw(o Vec2[T], radians f64) Vec2[T] {
+	return v.rotate_around_ccw(o, -radians)
+}
+
+// rotate_around_ccw returns the vector `v` rotated *counter-clockwise* `radians` around an origin vector `o` in Cartesian space.
+pub fn (v Vec2[T]) rotate_around_ccw(o Vec2[T], radians f64) Vec2[T] {
+	s := math.sin(radians)
+	c := math.cos(radians)
+	dx := v.x - o.x
+	dy := v.y - o.y
+	return Vec2[T]{
+		x: T(c * dx - s * dy + o.x)
+		y: T(s * dx + c * dy + o.y)
+	}
 }
 
 // eq returns a bool indicating if the two vectors are equal.
-[inline]
+@[inline]
 pub fn (v Vec2[T]) eq(u Vec2[T]) bool {
 	return v.x == u.x && v.y == u.y
 }
 
 // eq_epsilon returns a bool indicating if the two vectors are equal within the module `vec_epsilon` const.
 pub fn (v Vec2[T]) eq_epsilon(u Vec2[T]) bool {
-	return v.eq_approx[T, f32](u, vec.vec_epsilon)
+	return v.eq_approx[T, T](u, T(vec_epsilon))
 }
 
 // eq_approx returns whether these vectors are approximately equal within `tolerance`.
@@ -316,13 +357,33 @@ pub fn (v Vec2[T]) manhattan_distance(u Vec2[T]) T {
 // angle_between returns the angle in radians to the vector `u`.
 pub fn (v Vec2[T]) angle_between(u Vec2[T]) T {
 	$if T is f64 {
-		return math.atan2((v.y - u.y), (v.x - u.x))
+		return math.atan2(v.cross(u), v.dot(u))
 	} $else {
-		return T(math.atan2(f64(v.y - u.y), f64(v.x - u.x)))
+		return T(math.atan2(f64(v.cross(u)), f64(v.dot(u))))
+	}
+}
+
+// angle_towards returns the angle in radians between the horizontal axis,
+// and a line passing through the first and second point, as if the first point
+// was at the center of the coordinate system.
+pub fn (p1 Vec2[T]) angle_towards(p2 Vec2[T]) T {
+	$if T is f64 {
+		return math.atan2(p2.y - p1.y, p2.x - p1.x)
+	} $else {
+		return T(math.atan2(f64(p2.y) - f64(p1.y), f64(p2.x) - f64(p1.x)))
 	}
 }
 
 // angle returns the angle in radians of the vector.
+// example:
+// ```v
+// v := vec2[f32](3.0, 4.0)
+// a := v.angle()
+// assert a == 0.64 (approximate value in radians)
+// w := vec2[f32](0.0, 1.0)
+// b := w.angle()
+// assert b == 1.57 (approximate value in radians)
+// ```
 pub fn (v Vec2[T]) angle() T {
 	$if T is f64 {
 		return math.atan2(v.y, v.x)
@@ -333,12 +394,8 @@ pub fn (v Vec2[T]) angle() T {
 
 // abs sets `x` and `y` field values to their absolute values.
 pub fn (mut v Vec2[T]) abs() {
-	if v.x < 0 {
-		v.x = math.abs(v.x)
-	}
-	if v.y < 0 {
-		v.y = math.abs(v.y)
-	}
+	v.x = math.abs(v.x)
+	v.y = math.abs(v.y)
 }
 
 // clean returns a vector with all fields of this vector set to zero (0) if they fall within `tolerance`.
@@ -364,6 +421,14 @@ pub fn (mut v Vec2[T]) clean_tolerance[U](tolerance U) {
 }
 
 // inv returns the inverse, or reciprocal, of the vector.
+// If a field is zero, its inverse is also set to zero to avoid division by zero.
+// the direction the vector points is generally not preserved, but
+// the magnitude of each field is inverted.
+// example:
+// ```v
+// v := vec2[f32](2.0, 4.0)
+// inv_v := v.inv() // inv_v == vec2[f32](0.5, 0.25)
+// ```
 pub fn (v Vec2[T]) inv() Vec2[T] {
 	return Vec2[T]{
 		x: if v.x != 0 { T(1) / v.x } else { 0 }
@@ -372,6 +437,13 @@ pub fn (v Vec2[T]) inv() Vec2[T] {
 }
 
 // normalize normalizes the vector.
+// A normalized vector has the same direction as the original vector but a magnitude of 1.
+// If the vector has a magnitude of 0, a zero vector is returned since we cannot find the direction of a zero-length vector.
+// example:
+// ```v
+// v := vec2[f32](3.0, 4.0)//magnitude = 5.0
+// n := v.normalize() // n == vec2[f32](0.6, 0.8) // magnitude = 1.0
+// ```
 pub fn (v Vec2[T]) normalize() Vec2[T] {
 	m := v.magnitude()
 	if m == 0 {
@@ -384,6 +456,12 @@ pub fn (v Vec2[T]) normalize() Vec2[T] {
 }
 
 // sum returns a sum of all the fields.
+// example:
+// ```v
+// v := vec2[f32](3.0, 4.0)
+// s := v.sum()
+// assert s == 7.0
+// ```
 pub fn (v Vec2[T]) sum() T {
 	return v.x + v.y
 }

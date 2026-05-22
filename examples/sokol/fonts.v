@@ -1,4 +1,4 @@
-import sokol
+// vtest build: !solaris
 import sokol.sapp
 import sokol.gfx
 import sokol.sgl
@@ -14,28 +14,16 @@ mut:
 }
 
 fn main() {
-	mut color_action := gfx.ColorAttachmentAction{
-		action: .clear
-		value: gfx.Color{
-			r: 0.3
-			g: 0.3
-			b: 0.32
-			a: 1.0
-		}
-	}
-	mut pass_action := gfx.PassAction{}
-	pass_action.colors[0] = color_action
 	state := &AppState{
-		pass_action: pass_action
+		pass_action:  gfx.create_clear_pass_action(0.3, 0.3, 0.32, 1.0)
 		font_context: unsafe { nil } // &fontstash.Context(0)
 	}
 	title := 'V Metal/GL Text Rendering'
 	desc := sapp.Desc{
-		user_data: state
-		init_userdata_cb: init
+		user_data:         state
+		init_userdata_cb:  init
 		frame_userdata_cb: frame
-		window_title: title.str
-		html5_canvas_name: title.str
+		window_title:      &char(title.str)
 	}
 	sapp.run(&desc)
 }
@@ -51,13 +39,14 @@ fn init(mut state AppState) {
 		'RobotoMono-Regular.ttf')))
 	{
 		println('loaded font: ${bytes.len}')
-		state.font_normal = state.font_context.add_font_mem('sans', bytes, false)
+		state.font_normal = state.font_context.add_font_mem('sans', bytes.clone(), true)
 	}
 }
 
 fn frame(mut state AppState) {
 	state.render_font()
-	gfx.begin_default_pass(&state.pass_action, sapp.width(), sapp.height())
+	pass := sapp.create_default_pass(state.pass_action)
+	gfx.begin_pass(&pass)
 	sgl.draw()
 	gfx.end_pass()
 	gfx.commit()
@@ -105,7 +94,8 @@ fn (state &AppState) render_font() {
 	font_context.set_size(20.0)
 	font_context.set_font(state.font_normal)
 	font_context.set_color(blue)
-	font_context.draw_text(dx, dy, 'Now is the time for all good men to come to the aid of the party.')
+	font_context.draw_text(dx, dy,
+		'Now is the time for all good men to come to the aid of the party.')
 	dx = 300
 	dy = 350
 	font_context.set_alignment(.left | .baseline)

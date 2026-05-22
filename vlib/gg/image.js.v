@@ -1,6 +1,6 @@
 module gg
 
-[heap]
+@[heap]
 pub struct Image {
 pub mut:
 	id          int
@@ -15,4 +15,8 @@ pub mut:
 }
 
 pub fn (ctx &Context) draw_image_with_config(config DrawImageConfig) {
+}
+
+// destroy GPU resources associated with the image
+fn (img &Image) destroy() {
 }

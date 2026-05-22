@@ -1,4 +1,4 @@
-iarna/toml-test/
-burntsushi/toml-test/
-alexcrichton/toml-test/
+iarna/
+toml_lang/
+toml_rs/
 large_toml_file_test.toml

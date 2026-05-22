@@ -36,3 +36,40 @@ fn test_hours() {
 	assert time.parse('2023-08-04 22:00:45')!.custom_format('ii A i a hh A h a') == '10 PM 10 pm 10 PM 10 pm'
 	assert time.parse('2023-08-04 23:00:45')!.custom_format('ii A i a hh A h a') == '11 PM 11 pm 11 PM 11 pm'
 }
+
+fn test_hours_k_and_kk() {
+	test_time := time.Time{
+		year:       2024
+		month:      7
+		day:        15
+		hour:       14
+		minute:     30
+		second:     45
+		nanosecond: 123456789
+	}
+	assert test_time.custom_format('MM.DD.YYYY k:mm:ss') == '07.15.2024 14:30:45'
+	assert test_time.custom_format('MM.DD.YYYY kk:mm:ss') == '07.15.2024 14:30:45'
+}
+
+fn test_zero_date() {
+	zero_date := time.Time{}
+	res :=
+		zero_date.custom_format('M MM Mo MMM MMMM |1| D DD DDD DDDD |2| d dd ddd dddd |3| YY YYYY a A |4| H HH h hh k kk i ii e |5| m mm s ss |6| Do DDDo Q Qo QQ |7| N NN |8| M/D/YYYY N-HH:mm:ss Qo?a')
+	assert res == '0 00 0th Jan January |1| 0 00 0 000 |2| -1 Mo Mon Monday |3|  0 am AM |4| 0 00 12 12 24 24 0 00 e |5| 0 00 0 00 |6| 0th 0th 1 1st 01 |7| AD Anno Domini |8| 0/0/0 AD-00:00:00 1st?am'
+}
+
+fn test_quarter() {
+	pattern := '2025-xx-27t12:34:56z'
+	expect := [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]
+	mut want := []int{len: 12}
+	for n in 0 .. 12 {
+		tt := time.parse_rfc3339(pattern.replace('xx', '${n + 1:02}'))!
+		want[n] = tt.custom_format('Q').int()
+	}
+	assert want == expect
+
+	turing := time.parse_format('1912-06-23', 'YYYY-MM-DD')! // Alan Turing was born
+	assert turing.custom_format('Qo') == '2nd'
+	mccarthy := time.parse_format('1927-09-04', 'YYYY-MM-DD')! // John McCarthy was born
+	assert mccarthy.custom_format('QQ') == '03'
+}

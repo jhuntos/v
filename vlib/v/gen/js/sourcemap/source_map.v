@@ -4,18 +4,16 @@ import io
 import os
 import x.json2
 
-const (
-	source_map_version = 3
-)
+const source_map_version = 3
 
 type SourceMapJson = map[string]json2.Any
 
 pub struct SourceMap {
 pub mut:
-	version                int               [json: version]
-	file                   string            [json: file]
-	source_root            string            [json: source_root]
-	sources                Sets              [json: sources]
+	version                int    @[json: version]
+	file                   string @[json: file]
+	source_root            string @[json: source_root]
+	sources                Sets   @[json: sources]
 	sources_content        map[string]string
 	names                  Sets
 	mappings               Mappings
@@ -29,23 +27,24 @@ pub mut:
 
 pub fn new_sourcemap(file string, source_root string, sources_content_inline bool) SourceMap {
 	return SourceMap{
-		version: sourcemap.source_map_version
-		file: file
-		source_root: source_root
-		mappings: new_mappings()
+		version:                source_map_version
+		file:                   file
+		source_root:            source_root
+		mappings:               new_mappings()
 		sources_content_inline: sources_content_inline
 	}
 }
 
 // Add a single mapping from original source line and column to the generated source's line and column for this source map being created.
-pub fn (mut sm SourceMap) add_mapping(source_name string, source_position SourcePositionType, gen_line u32, gen_column u32, name string) {
-	if source_name.len == 0 {
+pub fn (mut sm SourceMap) add_mapping(source_name string, source_position SourcePositionType, gen_line u32,
+	gen_column u32, name string) {
+	if source_name == '' {
 		panic('add_mapping, source_name should not be ""')
 	}
 
 	sources_ind := sm.sources.add(source_name)
 
-	names_ind := if name.len != 0 {
+	names_ind := if name != '' {
 		NameIndexType(IndexNumber(sm.names.add(name)))
 	} else {
 		NameIndexType(Empty{})
@@ -55,20 +54,20 @@ pub fn (mut sm SourceMap) add_mapping(source_name string, source_position Source
 
 // Add multiple mappings from the same source
 pub fn (mut sm SourceMap) add_mapping_list(source_name string, mapping_list []MappingInput) ! {
-	if source_name.len == 0 {
+	if source_name == '' {
 		panic('add_mapping_list, source_name should not be ""')
 	}
 
 	sources_ind := sm.sources.add(source_name)
 
 	for mapping in mapping_list {
-		names_ind := if mapping.name.len != 0 {
+		names_ind := if mapping.name != '' {
 			NameIndexType(IndexNumber(sm.names.add(mapping.name)))
 		} else {
 			NameIndexType(Empty{})
 		}
-		sm.mappings.add_mapping(mapping.gen_line, mapping.gen_column, sources_ind, mapping.source_position,
-			names_ind)
+		sm.mappings.add_mapping(mapping.gen_line, mapping.gen_column, sources_ind,
+			mapping.source_position, names_ind)
 	}
 }
 
@@ -82,7 +81,7 @@ fn (mut sm SourceMap) export_mappings(mut writer io.Writer) {
 }
 
 fn (mut sm SourceMap) export_mappings_string() string {
-	mut output := StringWriter{}
+	mut output := &StringWriter{}
 
 	sm.mappings.export_mappings(mut output) or { panic('export failed') }
 	return output.bytes.bytestr()
@@ -92,6 +91,7 @@ fn (mut sm SourceMap) export_mappings_string() string {
 // Sourcemap Specs http://sourcemaps.info/spec.html
 pub fn (mut sm SourceMap) to_json() SourceMapJson {
 	mut source_map_json := map[string]json2.Any{}
+	mappings_json := sm.export_mappings_string()
 	source_map_json['version'] = sm.version
 	if sm.file != '' {
 		source_map_json['file'] = json2.Any(sm.file)
@@ -125,7 +125,7 @@ pub fn (mut sm SourceMap) to_json() SourceMapJson {
 		names_json << name
 	}
 	source_map_json['names'] = json2.Any(names_json)
-	source_map_json['mappings'] = sm.export_mappings_string()
+	source_map_json['mappings'] = json2.Any(mappings_json)
 	return source_map_json
 }
 

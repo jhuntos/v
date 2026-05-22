@@ -3,31 +3,47 @@ name: Cross CI
 on:
   push:
     paths-ignore:
-      - "**.md"
+      - '**.md'
+      - '**.yml'
+      - '!**/cross_ci.yml'
+      - 'cmd/tools/**'
+      - '!cmd/tools/builders/**.v'
   pull_request:
     paths-ignore:
-      - "**.md"
+      - '**.md'
+      - '**.yml'
+      - '!**/cross_ci.yml'
+      - 'cmd/tools/**'
+      - '!cmd/tools/builders/**.v'
+
+concurrency:
+  group: cross-${{ github.workflow }}-${{ github.ref == 'refs/heads/master' && github.sha || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-
-  macos-cross:
-    runs-on: macOS-latest
-    if: github.event_name != 'push' || github.event.ref == 'refs/heads/master' || github.event.repository.full_name != 'vlang/v'
-    timeout-minutes: 25
+  cross-macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
     env:
       VFLAGS: -cc clang
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 10
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: brew-cross-macos-${{ hashFiles('.github/workflows/cross_ci.yml') }}
+          restore-keys: |
+            brew-cross-macos-
+      - name: Build V
+        run: make -j4 && ./v symlink
 
       - name: Install dependencies
         run: |
-          brew install mingw-w64
+          ./v retry -- brew install mingw-w64
           export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
-
-      - name: Build V
-        run: make
 
       - name: Test symlink
         run: ./v symlink
@@ -37,34 +53,46 @@ jobs:
           ./v -os linux cmd/v
           # TODO: fix this: ./v -os linux examples/2048/2048.v
 
+      - name: Cross-compilation of veb app to Linux with -d use_openssl
+        run: ./v -d use_openssl -os linux examples/veb/veb_example.v
+
+      - name: Cross-compilation of vlang/gitly to Linux with -d use_openssl
+        run: |
+          ./v retry -- ./v install markdown
+          ./v retry -- ./v install pcre
+          ./v retry -- git clone --depth 1 https://github.com/vlang/gitly /tmp/gitly
+          ./v -d use_openssl -os linux /tmp/gitly
+          file /tmp/gitly/gitly
+
       - name: Cross-compilation to Windows
         run: |
           ./v -os windows cmd/v
           ./v -os windows examples/2048/2048.v
 
-  linux-cross:
-    runs-on: ubuntu-20.04
-    if: github.event_name != 'push' || github.event.ref == 'refs/heads/master' || github.event.repository.full_name != 'vlang/v'
-    timeout-minutes: 25
+  cross-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       VFLAGS: -cc tcc -no-retry-compilation
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 10
+      - uses: ./.github/actions/cache-apt-packages-action
+      - name: Build v
+        run: make -j4 && ./v symlink
+
       - name: Install dependencies
         run: |
-          ## sudo dpkg --add-architecture i386
-          sudo apt update
-          sudo apt-get install --quiet -y libssl-dev sqlite3 libsqlite3-dev
-          sudo apt-get install --quiet -y mingw-w64 wine-stable winetricks
-          ## sudo apt-get install --quiet -y wine32
+          .github/workflows/disable_azure_mirror.sh
+          ./v retry -- sudo apt update -y -qq
+          ./v retry -- sudo apt install --quiet -y mingw-w64 wine wine64 winetricks libssl-dev sqlite3 libsqlite3-dev
 
-      - name: Turn off the wine crash dialog
-        run: winetricks nocrashdialog
-
-      - name: Build v
-        run: make
+      - name: Show diagnostics for wine
+        run: |
+          which wine
+          # shellcheck disable=SC2046
+          ls -la $(realpath $(which wine))
 
       - name: v.c can be compiled and run with -os cross
         run: |
@@ -76,32 +104,31 @@ jobs:
       - name: v_win.c can be compiled and run with -os windows
         run: |
           ./v -cc msvc -os windows -o /tmp/v_win.c cmd/v
-          x86_64-w64-mingw32-gcc /tmp/v_win.c -std=c99 -w -municode -o v_from_vc.exe
+          x86_64-w64-mingw32-gcc /tmp/v_win.c -std=c99 -w -municode -o v_from_vc.exe -lws2_32 -Wl,-stack=33554432
           ls -lart v_from_vc.exe
-          wine64 ./v_from_vc.exe version
+          wine ./v_from_vc.exe version
 
       - name: hello_world.v can be cross compiled to hello_world.exe
         run: |
           ./v -os windows examples/hello_world.v
           ls -lart examples/hello_world.exe
-          wine64 examples/hello_world.exe
+          wine examples/hello_world.exe
 
       - name: 2048.v can be cross compiled to 2048.exe
         run: |
           ./v -os windows examples/2048/2048.v
           ls -lart examples/2048/2048.exe
 
-  windows-cross:
-    runs-on: windows-2019
-    if: github.event_name != 'push' || github.event.ref == 'refs/heads/master' || github.event.repository.full_name != 'vlang/v'
-    timeout-minutes: 25
+  cross-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Build
         run: |
           echo %VFLAGS%
           echo $VFLAGS
-          .\make.bat -msvc
+          .\makev.bat -msvc
       - name: TODO v_win.c can be compiled and run with -os windows
         run: |
           .\v.exe -os windows -cc msvc -showcc -o v2.exe cmd\v

@@ -2,10 +2,8 @@ module unsigned
 
 import math.bits
 
-pub const (
-	uint256_zero = Uint256{Uint128{}, Uint128{}}
-	uint256_max  = Uint256{uint128_max, uint128_max}
-)
+pub const uint256_zero = Uint256{Uint128{}, Uint128{}}
+pub const uint256_max = Uint256{uint128_max, uint128_max}
 
 // Uint256 is an unsigned 256-bit number
 pub struct Uint256 {
@@ -22,6 +20,11 @@ pub fn uint256_from_128(v Uint128) Uint256 {
 // uint256_from_64 creates a new `unsigned.Uint256` from the given u64 value
 pub fn uint256_from_64(v u64) Uint256 {
 	return uint256_from_128(uint128_from_64(v))
+}
+
+// uint256_new creates new Uint256 with given `lo` and `hi`
+pub fn uint256_new(lo Uint128, hi Uint128) Uint256 {
+	return Uint256{lo, hi}
 }
 
 // is_zero checks if specified Uint256 is zero
@@ -91,7 +94,7 @@ pub fn (u Uint256) xor_128(v Uint128) Uint256 {
 	return Uint256{u.lo.xor(v), u.hi}
 }
 
-// add_256 - untested
+// add_256 return u + v and the carry
 pub fn add_256(x Uint256, y Uint256, carry u64) (Uint256, u64) {
 	mut sum := Uint256{}
 	mut carry_out := u64(0)
@@ -100,7 +103,7 @@ pub fn add_256(x Uint256, y Uint256, carry u64) (Uint256, u64) {
 	return sum, carry_out
 }
 
-// sub_256 - untested
+// sub_256 returns u - v and the borrow
 pub fn sub_256(x Uint256, y Uint256, borrow u64) (Uint256, u64) {
 	mut diff := Uint256{}
 	mut borrow_out := u64(0)
@@ -109,7 +112,7 @@ pub fn sub_256(x Uint256, y Uint256, borrow u64) (Uint256, u64) {
 	return diff, borrow_out
 }
 
-// mul_256 - untested
+// mul_256 returns u x v
 pub fn mul_256(x Uint256, y Uint256) (Uint256, Uint256) {
 	mut hi := Uint256{}
 	mut lo := Uint256{}
@@ -137,7 +140,7 @@ pub fn (u Uint256) add(v Uint256) Uint256 {
 	return sum
 }
 
-// overflowing_add - untested
+// overflowing_add returns u + v even if result size > 256
 pub fn (u Uint256) overflowing_add(v Uint256) (Uint256, u64) {
 	sum, overflow := add_256(u, v, 0)
 	return sum, overflow
@@ -175,8 +178,13 @@ pub fn (u Uint256) mul_128(v Uint128) Uint256 {
 	return Uint256{lo, hi.add(u.hi.mul(v))}
 }
 
-// quo_rem - untested
+// quo_rem returns q = u/v and r = u%v
 pub fn (u Uint256) quo_rem(v Uint256) (Uint256, Uint256) {
+	if v.hi.is_zero() && v.lo.hi == 0 {
+		q, r := u.quo_rem_64(v.lo.lo)
+		return q, uint256_from_64(r)
+	}
+
 	if v.hi.is_zero() {
 		q, r := u.quo_rem_128(v.lo)
 		return q, uint256_from_128(r)
@@ -198,7 +206,7 @@ pub fn (u Uint256) quo_rem(v Uint256) (Uint256, Uint256) {
 	return q, r
 }
 
-// quo_rem_128 - untested
+// quo_rem_128 returns q = u/v and r = u%v
 pub fn (u Uint256) quo_rem_128(v Uint128) (Uint256, Uint128) {
 	if u.hi.cmp(v) < 0 {
 		lo, r := div_128(u.hi, u.lo, v)
@@ -210,75 +218,108 @@ pub fn (u Uint256) quo_rem_128(v Uint128) (Uint256, Uint128) {
 	return Uint256{lo, hi}, r2
 }
 
-// quo_rem_64 - untested
+// quo_rem_64 returns q = u/v and r = u%v
 pub fn (u Uint256) quo_rem_64(v u64) (Uint256, u64) {
 	mut q := Uint256{}
 	mut r := u64(0)
+	q.hi.hi, r = bits.div_64(r, u.hi.hi, v)
+	q.hi.lo, r = bits.div_64(r, u.hi.lo, v)
 	q.lo.hi, r = bits.div_64(r, u.lo.hi, v)
 	q.lo.lo, r = bits.div_64(r, u.lo.lo, v)
 	return q, r
 }
 
 // rsh returns a new Uint256 that has been right bit shifted
-pub fn (u Uint256) rsh(n_ u32) Uint256 {
-	mut n := n_
-	if n > 128 {
-		return Uint256{u.hi.rsh(n - 128), uint128_zero}
+pub fn (u Uint256) rsh(n u32) Uint256 {
+	mut s := Uint256{}
+	if n == 0 {
+		s.lo = u.lo
+		s.hi = u.hi
+	} else if n >= 256 {
+		s.lo = uint128_zero
+		s.hi = uint128_zero
+	} else if n == 128 {
+		s.hi = uint128_zero
+		s.lo = u.hi
+	} else if n > 128 {
+		s.hi = uint128_zero
+		s.lo = u.hi.rsh(n - 128)
+	} else if n == 64 {
+		s.lo = Uint128{u.lo.hi, u.hi.lo}
+		s.hi = Uint128{u.hi.hi, 0}
+	} else if n > 64 {
+		shift := n - 64
+		s.lo =
+			Uint128{u.lo.hi >> shift | u.hi.lo << (64 - shift), u.hi.lo >> shift | u.hi.hi << (64 - shift)}
+		s.hi = Uint128{u.hi.hi >> shift, 0}
+	} else {
+		s.lo = Uint128{u.lo.lo >> n | u.lo.hi << (64 - n), u.lo.hi >> n | u.hi.lo << (64 - n)}
+		s.hi = Uint128{u.hi.lo >> n | u.hi.hi << (64 - n), u.hi.hi >> n}
 	}
-
-	if n > 64 {
-		n -= 64
-		return Uint256{Uint128{u.lo.hi >> n | u.hi.lo << (64 - n), u.hi.lo >> n | u.hi.hi << (64 - n)}, Uint128{u.hi.hi >> n, 0}}
-	}
-	return Uint256{Uint128{u.lo.lo >> n | u.lo.hi << (64 - n), u.lo.hi >> n | u.hi.lo << (64 - n)}, Uint128{u.hi.lo >> n | u.hi.hi << (64 - n), u.hi.hi >> n}}
+	return s
 }
 
 // lsh returns a new Uint256 that has been left bit shifted
-pub fn (u Uint256) lsh(n_ u32) Uint256 {
-	mut n := n_
-	if n > 128 {
-		return Uint256{u.lo.lsh(n - 128), uint128_zero}
+pub fn (u Uint256) lsh(n u32) Uint256 {
+	mut s := Uint256{}
+	if n == 0 {
+		s.lo = u.lo
+		s.hi = u.hi
+	} else if n >= 256 {
+		s.lo = uint128_zero
+		s.hi = uint128_zero
+	} else if n == 128 {
+		s.lo = uint128_zero
+		s.hi = u.lo
+	} else if n > 128 {
+		s.lo = uint128_zero
+		s.hi = u.lo.lsh(n - 128)
+	} else if n == 64 {
+		s.lo = Uint128{0, u.lo.lo}
+		s.hi = Uint128{u.lo.hi, u.hi.lo}
+	} else if n > 64 {
+		shift := n - 64
+		s.lo = Uint128{0, u.lo.lo << shift}
+		s.hi =
+			Uint128{u.lo.lo >> (64 - shift) | u.lo.hi << shift, u.lo.hi >> (64 - shift) | u.hi.lo << shift}
+	} else {
+		s.lo = Uint128{u.lo.lo << n, u.lo.hi << n | u.lo.lo >> (64 - n)}
+		s.hi = Uint128{u.hi.lo << n | u.lo.hi >> (64 - n), u.hi.hi << n | u.hi.lo >> (64 - n)}
 	}
-
-	if n > 64 {
-		n -= 64
-		return Uint256{Uint128{u.lo.lo << n, 0}, Uint128{u.lo.hi << n | u.lo.lo >> (64 - n), u.hi.lo << n | u.lo.hi >> (64 - n)}}
-	}
-
-	return Uint256{Uint128{u.lo.lo << n, u.lo.hi << n | u.lo.lo >> (64 - n)}, Uint128{u.hi.lo << n | u.lo.hi >> (64 - n), u.hi.hi << n | u.hi.lo >> (64 - n)}}
+	return s
 }
 
-// div - untested
+// div returns u / v
 pub fn (u Uint256) div(v Uint256) Uint256 {
 	q, _ := u.quo_rem(v)
 	return q
 }
 
-// div_128 - untested
+// div_128 returns u / v
 pub fn (u Uint256) div_128(v Uint128) Uint256 {
 	q, _ := u.quo_rem_128(v)
 	return q
 }
 
-// div_64 - untested
+// div_64 returns u / v
 pub fn (u Uint256) div_64(v u64) Uint256 {
 	q, _ := u.quo_rem_64(v)
 	return q
 }
 
-// mod - untested
+// mod returns r = u % v
 pub fn (u Uint256) mod(v Uint256) Uint256 {
 	_, r := u.quo_rem(v)
 	return r
 }
 
-// mod_128 - untested
+// mod_128 returns r = u % v
 pub fn (u Uint256) mod_128(v Uint128) Uint128 {
 	_, r := u.quo_rem_128(v)
 	return r
 }
 
-// mod_64 - untested
+// mod_64 returns r = u % v
 pub fn (u Uint256) mod_64(v u64) u64 {
 	_, r := u.quo_rem_64(v)
 	return r
@@ -309,7 +350,7 @@ pub fn (u Uint256) rotate_left(k int) Uint256 {
 			return Uint256{u.hi, u.lo}
 		}
 
-		return Uint256{Uint128{u.hi.lo << n | u.lo.hi >> (64 - n), u.hi.hi << n | u.hi.lo >> (64 - n)}, Uint128{}}
+		return Uint256{Uint128{u.hi.lo << n | u.lo.hi >> (64 - n), u.hi.hi << n | u.hi.lo >> (64 - n)}, Uint128{u.lo.lo << n | u.hi.hi >> (64 - n), u.lo.hi << n | u.lo.lo >> (64 - n)}}
 	}
 	n -= 64
 	if n == 0 {
@@ -364,7 +405,8 @@ pub fn (u_ Uint256) str() string {
 		return u.lo.str()
 	}
 
-	mut buf := '000000000000000000000000000000000000000000000000000000000000000000000000000000'.bytes()
+	mut buf :=
+		'000000000000000000000000000000000000000000000000000000000000000000000000000000'.bytes()
 
 	for i := buf.len; true; i -= 19 {
 		q, mut r := u.quo_rem_64(u64(1e19))
@@ -382,11 +424,19 @@ pub fn (u_ Uint256) str() string {
 }
 
 // uint256_from_dec_str creates a new `unsigned.Uint256` from the given string if possible
+// The `_` character is allowed as a separator.
 pub fn uint256_from_dec_str(value string) !Uint256 {
-	mut res := unsigned.uint256_zero
-	for b_ in value.bytes() {
-		b := b_ - '0'.bytes()[0]
+	mut res := uint256_zero
+	underscore := `_`
+
+	for b_ in value {
+		b := b_ - `0`
 		if b > 9 {
+			// allow _ as a separator in decimal strings
+			if b_ == underscore {
+				continue
+			}
+
 			return error('invalid character "${b}"')
 		}
 
@@ -398,22 +448,32 @@ pub fn uint256_from_dec_str(value string) !Uint256 {
 	return res
 }
 
+// / -> returns u / v
 pub fn (u Uint256) / (v Uint256) Uint256 {
 	return u.div(v)
 }
 
+// % -> returns u % v
 pub fn (u Uint256) % (v Uint256) Uint256 {
 	return u.mod(v)
 }
 
+// + -> returns u + v
 pub fn (u Uint256) + (v Uint256) Uint256 {
 	return u.add(v)
 }
 
+// - -> returns u - v
 pub fn (u Uint256) - (v Uint256) Uint256 {
 	return u.sub(v)
 }
 
+// * -> returns u * v
 pub fn (u Uint256) * (v Uint256) Uint256 {
 	return u.mul(v)
+}
+
+// < -> returns true if u < v
+pub fn (u Uint256) < (v Uint256) bool {
+	return u.cmp(v) == -1
 }

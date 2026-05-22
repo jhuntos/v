@@ -3,6 +3,8 @@ module runner
 import os
 import v.util.diff
 
+const is_vautofix = os.getenv('VAUTOFIX') != ''
+
 pub struct RunnerOptions {
 pub:
 	wd    string
@@ -26,17 +28,12 @@ pub fn full_path_to_v(dirs_in int) string {
 	vreal  := os.real_path('v')
 	myself := os.real_path( os.executable() )
 	wd := os.getwd()
-	println('args are: $args')
-	println('vreal   : $vreal')
-	println('myself  : $myself')
-	println('wd      : $wd')
+	println('args are: ${args}')
+	println('vreal   : ${vreal}')
+	println('myself  : ${myself}')
+	println('wd      : ${wd}')
 	*/
 	return vexec
-}
-
-fn diff_files(file_result string, file_expected string) string {
-	diffcmd := diff.find_working_diff_command() or { return err.msg() }
-	return diff.color_compare_files(diffcmd, file_result, file_expected)
 }
 
 pub fn run_repl_file(wd string, vexec string, file string) !string {
@@ -59,7 +56,7 @@ pub fn run_repl_file(wd string, vexec string, file string) !string {
 		return error('Could not execute: ${rcmd}')
 	}
 	result := r.output.replace_each(['\r', '', '>>> ', '', '>>>', '', '... ', '',
-		wd + os.path_separator, '', vexec_folder, '', '\\', '/']).trim_right('\n\r')
+		wd + os.path_separator, '', vexec_folder, '']).trim_right('\n\r')
 	$if windows {
 		dump(rcmd)
 		dump(r.output)
@@ -67,22 +64,14 @@ pub fn run_repl_file(wd string, vexec string, file string) !string {
 	}
 	os.rm(input_temporary_filename)!
 	if result != output {
-		file_result := '${file}.result.txt'
-		file_expected := '${file}.expected.txt'
-		os.write_file(file_result, result) or { panic(err) }
-		os.write_file(file_expected, output) or { panic(err) }
-		diff_ := diff_files(file_expected, file_result)
-		return error('Difference found in REPL file: ${file}
-====> Expected :
-|${output}|
-====> Got      :
-|${result}|
-====> Diff     :
-${diff_}
-		')
-	} else {
-		return file.replace('./', '')
+		if is_vautofix {
+			new_content := input + '===output===\n' + r.output.trim_right('\n\r') + '\n'
+			os.write_file(file, new_content)!
+			eprintln('>>> fixed file: `${file}`, new_content.len: ${new_content.len}')
+		}
+		return diff_error(file, output, result)
 	}
+	return file.replace('./', '')
 }
 
 pub fn run_prod_file(wd string, vexec string, file string) !string {
@@ -101,20 +90,9 @@ pub fn run_prod_file(wd string, vexec string, file string) !string {
 	}
 	result := r.output.replace('\r', '')
 	if result != expected_content {
-		file_result := '${file}.result.txt'
-		os.write_file(file_result, result) or { panic(err) }
-		diff_ := diff_files(file_result, file_expected)
-		return error('Difference found in test: ${file}
-====> Got      :
-|${result}|
-====> Expected :
-|${expected_content}|
-====> Diff     :
-${diff_}
-		')
-	} else {
-		return 'Prod file ${file} is OK'
+		return diff_error(file, expected_content, result)
 	}
+	return 'Prod file ${file} is OK'
 }
 
 pub fn new_options() RunnerOptions {
@@ -129,7 +107,7 @@ pub fn new_options() RunnerOptions {
 		files = os.walk_ext('.', '.repl')
 	}
 	return RunnerOptions{
-		wd: wd
+		wd:    wd
 		vexec: vexec
 		files: files
 	}
@@ -145,8 +123,26 @@ pub fn new_prod_options() RunnerOptions {
 		files = os.walk_ext(wd, '.prod.v')
 	}
 	return RunnerOptions{
-		wd: wd
+		wd:    wd
 		vexec: vexec
 		files: files
 	}
+}
+
+fn diff_error(file string, expected string, found string) IError {
+	header := 'Difference found in REPL file: ${file}'
+	details := if diff_ := diff.compare_text(expected, found) {
+		'
+====> Diff     :
+${diff_}
+'
+	} else {
+		'
+====> Expected :
+|${expected}|
+====> Got      :
+|${found}|
+'
+	}
+	return error(header + details)
 }

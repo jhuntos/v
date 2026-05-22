@@ -1,11 +1,9 @@
 module strconv
 
-// import math
-
 /*
 f32/f64 to string utilities
 
-Copyright (c) 2019-2023 Dario Deledda. All rights reserved.
+Copyright (c) 2019-2024 Dario Deledda. All rights reserved.
 Use of this source code is governed by an MIT license
 that can be found in the LICENSE file.
 
@@ -25,24 +23,24 @@ f64 to string with string format
 */
 
 // TODO: Investigate precision issues
-// f32_to_str_l returns `f` as a `string` in decimal notation with a maximum of 6 digits after the dot.
-//
-// Example: assert strconv.f32_to_str_l(34.1234567) == '34.12346'
-[manualfree]
+// f32_to_str_l returns `f` as a `string` in decimal notation with a maximum of 8 digits after the dot.
+// Example: assert strconv.f32_to_str_l(0.1234567891) == '0.12345679'
+// Example: assert strconv.f32_to_str_l(34.1234567891) == '34.123455'
+@[manualfree]
 pub fn f32_to_str_l(f f32) string {
-	s := f32_to_str(f, 6)
+	s := f32_to_str(f, 8)
 	res := fxx_to_str_l_parse(s)
 	unsafe { s.free() }
 	return res
 }
 
-// f32_to_str_l_with_dot returns `f` as a `string` in decimal notation with a maximum of 6 digits after the dot.
+// f32_to_str_l_with_dot returns `f` as a `string` in decimal notation with a maximum of 8 digits after the dot.
 // If the decimal digits after the dot are zero, a '.0' is appended for clarity.
 //
-// Example: assert strconv.f32_to_str_l_with_dot(34.) == '34.0'
-[manualfree]
+// Example: assert strconv.f32_to_str_l_with_dot(34.2) == '34.2'
+@[manualfree]
 pub fn f32_to_str_l_with_dot(f f32) string {
-	s := f32_to_str(f, 6)
+	s := f32_to_str(f, 8)
 	res := fxx_to_str_l_parse_with_dot(s)
 	unsafe { s.free() }
 	return res
@@ -51,7 +49,7 @@ pub fn f32_to_str_l_with_dot(f f32) string {
 // f64_to_str_l returns `f` as a `string` in decimal notation with a maximum of 18 digits after the dot.
 //
 // Example: assert strconv.f64_to_str_l(123.1234567891011121) == '123.12345678910111'
-[manualfree]
+@[manualfree]
 pub fn f64_to_str_l(f f64) string {
 	s := f64_to_str(f, 18)
 	res := fxx_to_str_l_parse(s)
@@ -62,8 +60,8 @@ pub fn f64_to_str_l(f f64) string {
 // f64_to_str_l_with_dot returns `f` as a `string` in decimal notation with a maximum of 18 digits after the dot.
 // If the decimal digits after the dot are zero, a '.0' is appended for clarity.
 //
-// Example: assert strconv.f64_to_str_l_with_dot (34.) == '34.0'
-[manualfree]
+// Example: assert strconv.f64_to_str_l_with_dot(34.7) == '34.7'
+@[manualfree]
 pub fn f64_to_str_l_with_dot(f f64) string {
 	s := f64_to_str(f, 18)
 	res := fxx_to_str_l_parse_with_dot(s)
@@ -75,7 +73,7 @@ pub fn f64_to_str_l_with_dot(f f64) string {
 // floating-point `string` in scientific notation.
 //
 // Example: assert strconv.fxx_to_str_l_parse('34.22e+00') == '34.22'
-[direct_array_access; manualfree]
+@[direct_array_access; manualfree]
 pub fn fxx_to_str_l_parse(s string) string {
 	// check for +inf -inf Nan
 	if s.len > 2 && (s[0] == `n` || s[1] == `i`) {
@@ -201,7 +199,9 @@ pub fn fxx_to_str_l_parse(s string) string {
 	}
 
 	res[r_i] = 0
-	return unsafe { tos(res.data, r_i) }
+	tmp_res := unsafe { tos(res.data, r_i).clone() }
+	unsafe { res.free() }
+	return tmp_res
 }
 
 // fxx_to_str_l_parse_with_dot returns a `string` in decimal notation converted from a
@@ -209,7 +209,7 @@ pub fn fxx_to_str_l_parse(s string) string {
 // If the decimal digits after the dot are zero, a '.0' is appended for clarity.
 //
 // Example: assert strconv.fxx_to_str_l_parse_with_dot ('34.e+01') == '340.0'
-[direct_array_access; manualfree]
+@[direct_array_access; manualfree]
 pub fn fxx_to_str_l_parse_with_dot(s string) string {
 	// check for +inf -inf Nan
 	if s.len > 2 && (s[0] == `n` || s[1] == `i`) {
@@ -335,5 +335,7 @@ pub fn fxx_to_str_l_parse_with_dot(s string) string {
 	}
 
 	res[r_i] = 0
-	return unsafe { tos(res.data, r_i) }
+	tmp_res := unsafe { tos(res.data, r_i).clone() }
+	unsafe { res.free() }
+	return tmp_res
 }

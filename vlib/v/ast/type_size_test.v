@@ -4,7 +4,7 @@ import v.pref
 
 struct T01 {
 	a int
-	b byte
+	b u8
 	c int
 }
 
@@ -12,6 +12,7 @@ type T02 = string
 type T03 = int | string
 type T04 = []T03
 type T05 = [47]T03
+type T09 = map[string]string
 
 interface T06 {
 	a int
@@ -35,9 +36,9 @@ fn test_type_size() {
 	mut b := builder.new_builder(pref_)
 	mut files := b.get_builtin_files()
 	b.set_module_lookup_paths()
-	parser.parse_files(files, b.table, b.pref)
+	parser.parse_files(files, mut b.table, b.pref)
 	b.parse_imports()
-	parser.parse_file(@FILE, b.table, .parse_comments, b.pref)
+	parser.parse_file(@FILE, mut b.table, .parse_comments, b.pref)
 
 	mut t := b.table
 
@@ -57,6 +58,8 @@ fn test_type_size() {
 	assert sizeof(T07) == size07
 	size08, _ := t.type_size(t.type_idxs['main.T08']!)
 	assert sizeof(T08) == size08
+	size09, _ := t.type_size(t.type_idxs['main.T09']!)
+	assert sizeof(T09) == size09
 
 	println('done')
 }

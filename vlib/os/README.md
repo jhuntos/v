@@ -1,25 +1,34 @@
-## Description:
+## Description
 
 `os` provides common OS/platform independent functions for accessing
 command line arguments, reading/writing files, listing folders,
 handling processes etc.
 
-* * *
+On Windows, `os.data_dir()` uses `%LocalAppData%` for user-specific
+application data.
 
+### Running commands
+
+Use `os.exec(['program', 'arg 1', 'arg 2'])` when the command and its arguments
+are already separate values. It runs the program directly and does not invoke a
+shell, so spaces and shell metacharacters inside arguments are passed literally.
+
+Use `os.execute('command string')` only when shell syntax is intended.
+
+---
 
 ### Security advice related to TOCTOU attacks
 
-A few `os` module functions can lead to the <b>TOCTOU</b> vulnerability if used incorrectly. 
-<b>TOCTOU</b> (Time-of-Check-to-Time-of-Use problem) can occur when a file, folder or similar 
-is checked for certain specifications (e.g. read, write permissions) and a change is made 
-afterwards. 
-In the time between the initial check and the edit, an attacker can then cause damage. 
-The following example shows an attack strategy on the left and an improved variant on the right 
-so that <b>TOCTOU</b> is no longer possible.
+A few `os` module functions can lead to the **TOCTOU** vulnerability if used incorrectly.
+**TOCTOU** (Time-of-Check-to-Time-of-Use problem) can occur when a file, folder or similar
+is checked for certain specifications (e.g. read, write permissions) and a change is made
+afterwards.
+In the time between the initial check and the edit, an attacker can then cause damage.
+The following example shows an attack strategy on the left and an improved variant on the right
+so that **TOCTOU** is no longer possible.
 
-
-<b>Example</b>
-<i>Hint</i>: `os.create()` opens a file in write-only mode
+**Example** <br>
+*Hint*: `os.create()` opens a file in write-only mode
 
 <table>
 <tr>
@@ -39,6 +48,7 @@ if os.is_writable("file") {
     f.close()
 }
 ```
+
 </td>
 <td>
 
@@ -52,14 +62,15 @@ mut f := os.create('path/to/file') or {
 
 f.close()
 ```
+
 </td>
 </tr>
 </table>
 
-<b> Proven affected functions </b></br>
+**Proven affected functions** <br>
 The following functions should be used with care and only when used correctly.
 
-* os.is_readable()
-* os.is_writable()
-* os.is_executable()
-* os.is_link()
+- os.is_readable()
+- os.is_writable()
+- os.is_executable()
+- os.is_link()

@@ -15,8 +15,9 @@ fn test_bits() {
 	i = 1
 	for x in 0 .. 8 {
 		// C.printf("x:%02x lz: %d cmp: %d\n", i << x, leading_zeros_8(i << x), 7-x)
-		assert leading_zeros_8(u8(i << x)) == 7 - x
+		assert leading_zeros_8(u8(u8(i) << x)) == 7 - x
 	}
+	assert leading_zeros_8(0) == 8
 
 	// 16 bit
 	i = 1
@@ -24,6 +25,7 @@ fn test_bits() {
 		// C.printf("x:%04x lz: %d cmp: %d\n", u16(i) << x, leading_zeros_16(u16(i) << x), 15-x)
 		assert leading_zeros_16(u16(i) << x) == 15 - x
 	}
+	assert leading_zeros_16(0) == 16
 
 	// 32 bit
 	i = 1
@@ -31,6 +33,7 @@ fn test_bits() {
 		// C.printf("x:%08x lz: %d cmp: %d\n", u32(i) << x, leading_zeros_32(u32(i) << x), 31-x)
 		assert leading_zeros_32(u32(i) << x) == 31 - x
 	}
+	assert leading_zeros_32(0) == 32
 
 	// 64 bit
 	i = 1
@@ -38,6 +41,39 @@ fn test_bits() {
 		// C.printf("x:%016llx lz: %llu cmp: %d\n", u64(i) << x, leading_zeros_64(u64(i) << x), 63-x)
 		assert leading_zeros_64(u64(i) << x) == 63 - x
 	}
+	assert leading_zeros_64(0) == 64
+
+	//
+	// --- TrailingZeros ---
+	//
+
+	// 8 bit
+	i = 1
+	for x in 0 .. 8 {
+		assert trailing_zeros_8(u8(u8(i) << x)) == x
+	}
+	assert trailing_zeros_8(0) == 8
+
+	// 16 bit
+	i = 1
+	for x in 0 .. 16 {
+		assert trailing_zeros_16(u16(i) << x) == x
+	}
+	assert trailing_zeros_16(0) == 16
+
+	// 32 bit
+	i = 1
+	for x in 0 .. 32 {
+		assert trailing_zeros_32(u32(i) << x) == x
+	}
+	assert trailing_zeros_32(0) == 32
+
+	// 64 bit
+	i = 1
+	for x in 0 .. 64 {
+		assert trailing_zeros_64(u64(i) << x) == x
+	}
+	assert trailing_zeros_64(0) == 64
 
 	//
 	// --- ones_count ---
@@ -48,24 +84,30 @@ fn test_bits() {
 	for x in 0 .. 9 {
 		// C.printf("x:%02x lz: %llu cmp: %d\n", u8(i), ones_count_8(u8(i)), x)
 		assert ones_count_8(u8(i)) == x
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
+	assert ones_count_8(0) == 0
+	assert ones_count_8(0xFF) == 8
 
 	// 16 bit
 	i = 0
 	for x in 0 .. 17 {
 		// C.printf("x:%04x lz: %llu cmp: %d\n", u16(i), ones_count_16(u16(i)), x)
 		assert ones_count_16(u16(i)) == x
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
+	assert ones_count_16(0) == 0
+	assert ones_count_16(0xFFFF) == 16
 
 	// 32 bit
 	i = 0
 	for x in 0 .. 33 {
 		// C.printf("x:%08x lz: %llu cmp: %d\n", u32(i), ones_count_32(u32(i)), x)
 		assert ones_count_32(u32(i)) == x
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
+	assert ones_count_32(0) == 0
+	assert ones_count_32(0xFFFF_FFFF) == 32
 
 	// 64 bit
 	i1 = 0
@@ -74,6 +116,8 @@ fn test_bits() {
 		assert ones_count_64(i1) == x
 		i1 = (i1 << 1) + 1
 	}
+	assert ones_count_64(0) == 0
+	assert ones_count_64(0xFFFF_FFFF_FFFF_FFFF) == 64
 
 	//
 	// --- rotate_left/right ---
@@ -100,7 +144,7 @@ fn test_bits() {
 		}
 		// C.printf("x:%02x lz: %llu cmp: %d\n", u8(i), reverse_8(u8(i)), rv)
 		assert reverse_8(u8(i)) == rv
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
 
 	// 16 bit
@@ -116,7 +160,7 @@ fn test_bits() {
 		}
 		// C.printf("x:%04x lz: %llu cmp: %d\n", u16(i), reverse_16(u16(i)), rv)
 		assert reverse_16(u16(i)) == rv
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
 
 	// 32 bit
@@ -132,7 +176,7 @@ fn test_bits() {
 		}
 		// C.printf("x:%08x lz: %llu cmp: %d\n", u32(i), reverse_32(u32(i)), rv)
 		assert reverse_32(u32(i)) == rv
-		i = (i << 1) + 1
+		i = int(u32(i) << 1) + 1
 	}
 
 	// 64 bit
@@ -179,8 +223,7 @@ fn test_bits() {
 		// C.printf("x:%16x [%llu,%llu] %llu\n", u64(i) << x, sum, carry, u64(v >> 32) + u64(v >> 32))
 		assert ((carry << 32) | sum) == v + v
 	}
-	mut sum_64t, mut carry_64t := add_64(0x8000_0000_0000_0000, 0x8000_0000_0000_0000,
-		u64(0))
+	mut sum_64t, mut carry_64t := add_64(0x8000_0000_0000_0000, 0x8000_0000_0000_0000, u64(0))
 	assert sum_64t == u64(0)
 	assert carry_64t == u64(1)
 
@@ -241,6 +284,9 @@ fn test_bits() {
 		v1 := v0 - 1
 		hi, lo := mul_32(v0, v1)
 		assert (u64(hi) << 32) | (u64(lo)) == u64(v0) * u64(v1)
+		v2 := u32(x)
+		h, l := mul_add_32(v0, v1, v2)
+		assert (u64(h) << 32) | (u64(l)) == u64(v0) * u64(v1) + u64(v2)
 	}
 
 	// 64 bit
@@ -252,6 +298,11 @@ fn test_bits() {
 		// C.printf("v0: %llu v1: %llu [%llu,%llu] tt: %llu\n", v0, v1, hi, lo, (v0 >> 32) * (v1 >> 32))
 		assert (hi & 0xFFFF_FFFF_0000_0000) == (((v0 >> 32) * (v1 >> 32)) & 0xFFFF_FFFF_0000_0000)
 		assert (lo & 0x0000_0000_FFFF_FFFF) == (((v0 & 0x0000_0000_FFFF_FFFF) * (v1 & 0x0000_0000_FFFF_FFFF)) & 0x0000_0000_FFFF_FFFF)
+		v2 := u64(x)
+		h, l := mul_add_64(v0, v1, v2)
+		assert (h & 0xFFFF_FFFF_0000_0000) == (((v0 >> 32) * (v1 >> 32)) & 0xFFFF_FFFF_0000_0000)
+		assert (l & 0x0000_0000_FFFF_FFFF) == ((
+			(v0 & 0x0000_0000_FFFF_FFFF) * (v1 & 0x0000_0000_FFFF_FFFF) + v2) & 0x0000_0000_FFFF_FFFF)
 	}
 
 	//

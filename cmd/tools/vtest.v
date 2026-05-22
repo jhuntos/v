@@ -32,15 +32,15 @@ fn main() {
 		exit(1)
 	}
 	backend_pos := args_before.index('-b')
-	backend := if backend_pos == -1 { '.c' } else { args_before[backend_pos + 1] } // this giant mess because closures are not implemented
+	backend := if backend_pos == -1 { '.c' } else { args_before[backend_pos + 1] }
 
 	mut ts := testing.new_test_session(args_before.join(' '), true)
+	ts.exec_mode = .compile_and_run
 	ts.fail_fast = ctx.fail_fast
 	for targ in args_after {
 		if os.is_dir(targ) {
 			// Fetch all tests from the directory
-			files, skip_files := ctx.should_test_dir(targ.trim_right(os.path_separator),
-				backend)
+			files, skip_files := ctx.should_test_dir(targ.trim_right(os.path_separator), backend)
 			ts.files << files
 			ts.skip_files << skip_files
 			continue
@@ -55,7 +55,7 @@ fn main() {
 						continue
 					}
 					ts.files << targ
-					ts.skip_files << targ
+					ts.skip_files << os.abs_path(targ)
 					continue
 				}
 				.ignore {}
@@ -113,7 +113,7 @@ pub fn (mut ctx Context) should_test_dir(path string, backend string) ([]string,
 						continue
 					}
 					res_files << p
-					skip_files << p
+					skip_files << os.abs_path(p)
 				}
 				.ignore {}
 			}
@@ -123,30 +123,16 @@ pub fn (mut ctx Context) should_test_dir(path string, backend string) ([]string,
 }
 
 enum ShouldTestStatus {
-	test // do test, print OK or FAIL, depending on if it passes
-	skip // print SKIP for the test
+	test   // do test, print OK or FAIL, depending on if it passes
+	skip   // print SKIP for the test
 	ignore // just ignore the file, so it will not be printed at all in the list of tests
 }
 
 fn (mut ctx Context) should_test(path string, backend string) ShouldTestStatus {
-	if path.ends_with('mysql_orm_test.v') {
-		testing.find_started_process('mysqld') or { return .skip }
-	}
-	if path.ends_with('mysql_test.v') {
-		testing.find_started_process('mysqld') or { return .skip }
-	}
-	if path.ends_with('pg_orm_test.v') {
-		testing.find_started_process('postgres') or { return .skip }
-	}
-	if path.ends_with('onecontext_test.v') {
-		return .skip
-	}
-	$if tinyc {
-		if path.ends_with('naked_attr_test.amd64.v') {
-			return .skip
-		}
-	}
 	if path.ends_with('_test.v') {
+		return ctx.should_test_when_it_contains_matching_fns(path, backend)
+	}
+	if path.ends_with('_test.c.v') {
 		return ctx.should_test_when_it_contains_matching_fns(path, backend)
 	}
 	if path.ends_with('_test.js.v') {
@@ -185,7 +171,7 @@ fn (mut ctx Context) should_test(path string, backend string) ShouldTestStatus {
 	return .ignore
 }
 
-fn (mut ctx Context) should_test_when_it_contains_matching_fns(path string, backend string) ShouldTestStatus {
+fn (mut ctx Context) should_test_when_it_contains_matching_fns(path string, _backend string) ShouldTestStatus {
 	if ctx.run_only.len == 0 {
 		// no filters set, so just compile and test
 		return .test
@@ -213,7 +199,8 @@ fn (mut ctx Context) should_test_when_it_contains_matching_fns(path string, back
 
 fn extract_flag_bool(flag_name string, mut after []string, flag_default bool) bool {
 	mut res := flag_default
-	orig_after := after.clone() // workaround for after.filter() codegen bug, when `mut after []string`
+	orig_after :=
+		after.clone() // workaround for after.filter() codegen bug, when `mut after []string`
 	matches_after := orig_after.filter(it != flag_name)
 	if matches_after.len < after.len {
 		after = matches_after.clone()

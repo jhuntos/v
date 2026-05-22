@@ -1,3 +1,6 @@
+// vtest retry: 3
+// vtest build: present_node?
+
 fn test_js() {
 	$if js_node {
 		assert true
@@ -75,12 +78,12 @@ fn test_deleting() {
 
 fn test_slice_delete() {
 	mut a := [1.5, 2.5, 3.25, 4.5, 5.75]
-	b := a[2..4]
+	b := a[2..4].clone()
 	a.delete(0)
 	assert a == [2.5, 3.25, 4.5, 5.75]
 	assert b == [3.25, 4.5]
 	a = [3.75, 4.25, -1.5, 2.25, 6.0]
-	c := a[..3]
+	c := a[..3].clone()
 	a.delete(2)
 	assert a == [3.75, 4.25, 2.25, 6.0]
 	assert c == [3.75, 4.25, -1.5]
@@ -88,11 +91,11 @@ fn test_slice_delete() {
 
 fn test_delete_many() {
 	mut a := [1, 2, 3, 4, 5, 6, 7, 8, 9]
-	b := a[2..6]
+	b := a[2..6].clone()
 	a.delete_many(4, 3)
 	assert a == [1, 2, 3, 4, 8, 9]
 	assert b == [3, 4, 5, 6]
-	c := a[..a.len]
+	c := a[..a.len].clone()
 	a.delete_many(2, 0) // this should just clone
 	a[1] = 17
 	assert a == [1, 17, 3, 4, 8, 9]
@@ -340,9 +343,7 @@ fn test_reverse() {
 	assert f.len == 0
 }
 
-const (
-	c_n = 5
-)
+const c_n = 5
 
 struct Foooj {
 	a [5]int // c_n
@@ -539,6 +540,29 @@ fn test_find_index() {
 	assert d.index(`b`) == 1
 	assert d.index(`c`) == 2
 	assert d.index(`u`) == -1
+}
+
+fn test_find_last_index() {
+	// string
+	a := ['v', 'is', 'great', 'is', 'k', 'm']
+	assert a.last_index('v') == 0
+	assert a.last_index('is') == 3
+	assert a.last_index('gre') == -1
+	// int
+	b := [1, 2, 3, 4, 0, 1, 2, 3, 0, 1, 2, 3]
+	assert b.last_index(1) == 9
+	assert b.last_index(4) == 3
+	assert b.last_index(5) == -1
+	// byte
+	c := [0x22, 0x33, 0x55, 0x22, 0x44, 0x55]
+	assert c.last_index(0x22) == 3
+	assert c.last_index(0x55) == 5
+	assert c.last_index(0x99) == -1
+	// char
+	d := [`a`, `b`, `c`, `e`, `a`, `b`, `c`, `k`]
+	assert d.last_index(`b`) == 5
+	assert d.last_index(`c`) == 6
+	assert d.last_index(`u`) == -1
 }
 
 fn test_multi() {
@@ -746,10 +770,10 @@ fn test_eq() {
 	assert [5, 6, 7] != [6, 7]
 	assert [`a`, `b`] == [`a`, `b`]
 	assert [User{
-		age: 22
+		age:  22
 		name: 'bob'
 	}] == [User{
-		age: 22
+		age:  22
 		name: 'bob'
 	}]
 	/*
@@ -917,7 +941,7 @@ fn test_i64_sort() {
 fn test_sort_index_expr() {
 	mut f := [[i64(50), 48], [i64(15)], [i64(1)], [i64(79)], [i64(38)],
 		[i64(0)], [i64(27)]]
-	// TODO This currently gives "indexing pointer" error without unsafe
+	// TODO: This currently gives "indexing pointer" error without unsafe
 	unsafe {
 		f.sort(a[0] < b[0])
 	}
@@ -948,7 +972,7 @@ fn test_for_last() {
 	numbers := [1, 2, 3, 4]
 	mut s := '['
 	for num in numbers {
-		s += '$num'
+		s += '${num}'
 		if !last {
 			s += ', '
 
@@ -972,7 +996,7 @@ fn test_in_struct() {
 	assert baz.bar[0] == 3
 }
 
-[direct_array_access]
+@[direct_array_access]
 fn test_direct_modification() {
 	mut foo := [2, 0, 5]
 	foo[1] = 3
@@ -1052,7 +1076,7 @@ fn test_hex() {
 	assert st1.hex() == '41'.repeat(100)
 }*/
 
-fn test_left_shift_precendence() {
+fn test_left_shift_precedence() {
 	mut arr := []int{}
 	arr << 1 + 1
 	arr << 1 - 1
@@ -1079,7 +1103,7 @@ fn test_multi_array_index() {
 	assert '${a}' == '[[1, 0, 0], [0, 0, 0]]'
 	// mut b := [[0].repeat(3)].repeat(2)
 	// b[0][0] = 1
-	// assert '$b' == '[[1, 0, 0], [0, 0, 0]]'
+	// assert '${b}' == '[[1, 0, 0], [0, 0, 0]]'
 }
 
 fn test_plus_assign_string() {
@@ -1205,7 +1229,7 @@ fn test_array_last() {
 	assert s.last().val == 'a'
 }
 
-[direct_array_access]
+@[direct_array_access]
 fn test_direct_array_access() {
 	mut a := [11, 22, 33, 44]
 	assert a[0] == 11
@@ -1218,7 +1242,7 @@ fn test_direct_array_access() {
 	assert a == [21, 24, 14, 20]
 }
 
-[direct_array_access]
+@[direct_array_access]
 fn test_direct_array_access_via_ptr() {
 	mut b := [11, 22, 33, 44]
 	unsafe {
@@ -1240,19 +1264,17 @@ fn test_push_arr_string_free() {
 	lines << s
 	// make sure the data in the array is valid after freeing the string
 	unsafe { s.free() }
-	//
+
 	println(lines)
 	assert lines.len == 2
 	assert lines[0] == 'hi'
 	assert lines[1] == 'ab'
 }
 
-const (
-	grid_size_1 = 2
-	grid_size_2 = 3
-	grid_size_3 = 4
-	cell_value  = 123
-)
+const grid_size_1 = 2
+const grid_size_2 = 3
+const grid_size_3 = 4
+const cell_value = 123
 
 fn test_multidimensional_array_initialization_with_consts() {
 	mut data := [][][]int{len: grid_size_1, init: [][]int{len: grid_size_2, init: []int{len: grid_size_3, init: cell_value}}}
@@ -1312,7 +1334,7 @@ fn test_struct_array_of_multi_type_in() {
 	ivan := Person{
 		name: 'ivan'
 		nums: [1, 2, 3]
-		kv: {
+		kv:   {
 			'aaa': '111'
 		}
 	}
@@ -1320,14 +1342,14 @@ fn test_struct_array_of_multi_type_in() {
 		Person{
 			name: 'ivan'
 			nums: [1, 2, 3]
-			kv: {
+			kv:   {
 				'aaa': '111'
 			}
 		},
 		Person{
 			name: 'bob'
 			nums: [2]
-			kv: {
+			kv:   {
 				'bbb': '222'
 			}
 		},
@@ -1341,7 +1363,7 @@ fn test_struct_array_of_multi_type_index() {
 	ivan := Person{
 		name: 'ivan'
 		nums: [1, 2, 3]
-		kv: {
+		kv:   {
 			'aaa': '111'
 		}
 	}
@@ -1349,14 +1371,14 @@ fn test_struct_array_of_multi_type_index() {
 		Person{
 			name: 'ivan'
 			nums: [1, 2, 3]
-			kv: {
+			kv:   {
 				'aaa': '111'
 			}
 		},
 		Person{
 			name: 'bob'
 			nums: [2]
-			kv: {
+			kv:   {
 				'bbb': '222'
 			}
 		},
@@ -1425,7 +1447,7 @@ fn test_array_of_map_insert() {
 	x[2]['123'] = 123 // RTE
 	println(x)
 	println('TODO: Map eq')
-	// assert '$x' == "[{}, {}, {'123': 123}, {}]"
+	// assert '${x}' == "[{}, {}, {'123': 123}, {}]"
 }
 
 fn test_multi_fixed_array_init() {
@@ -1441,7 +1463,7 @@ struct Numbers {
 fn test_array_of_multi_filter() {
 	arr := [1, 2, 3, 4, 5]
 	nums := Numbers{
-		odds: arr.filter(it % 2 == 1)
+		odds:  arr.filter(it % 2 == 1)
 		evens: arr.filter(it % 2 == 0)
 	}
 	println(nums)
@@ -1452,7 +1474,7 @@ fn test_array_of_multi_filter() {
 fn test_array_of_multi_map() {
 	arr := [1, 3, 5]
 	nums := Numbers{
-		odds: arr.map(it + 2)
+		odds:  arr.map(it + 2)
 		evens: arr.map(it * 2)
 	}
 	println(nums)

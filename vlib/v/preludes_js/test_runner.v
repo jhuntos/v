@@ -38,7 +38,7 @@ fn myeprintln(s string) {
 // / customizing the look & feel of the assertions results easier,
 // / since it is done in normal V code, instead of in embedded C ...
 // //////////////////////////////////////////////////////////////////
-// TODO copy pasta builtin.v fn ___print_assert_failure
+// TODO: copy pasta builtin.v fn ___print_assert_failure
 fn cb_assertion_failed(i VAssertMetaInfo) {
 	filepath := if use_relative_paths { i.fpath } else { os.real_path(i.fpath) }
 	mut final_filepath := filepath + ':${i.line_nr + 1}:'
@@ -70,10 +70,10 @@ fn cb_assertion_failed(i VAssertMetaInfo) {
 	myeprintln('')
 }
 
-fn cb_assertion_ok(i &VAssertMetaInfo) {
+fn cb_assertion_ok(_ &VAssertMetaInfo) {
 }
 
-fn cb_propagate_test_error(line_nr int, file string, mod string, fn_name string, errmsg string) {
+fn cb_propagate_test_error(line_nr int, file string, _ string, fn_name string, errmsg string) {
 	filepath := if use_relative_paths { file } else { os.real_path(file) }
 	mut final_filepath := filepath + ':${line_nr}:'
 	mut final_funcname := 'fn ' + fn_name.replace('main.', '').replace('__', '.')

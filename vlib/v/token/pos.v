@@ -1,19 +1,20 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module token
 
 pub struct Pos {
 pub:
-	len     int // length of the literal in the source
-	line_nr int // the line number in the source where the token occured
-	pos     int // the position of the token in scanner text
-	col     int // the column in the source where the token occured
+	len      int // length of the literal in the source
+	line_nr  int // the line number in the source where the token occurred
+	pos      int // the position of the token in scanner text
+	col      u16 // the column in the source where the token occurred
+	file_idx i16 = -1 // file idx in the global table `filelist`
 pub mut:
 	last_line int // the line number where the ast object ends (used by vfmt)
 }
 
-[unsafe]
+@[unsafe]
 pub fn (mut p Pos) free() {
 }
 
@@ -24,17 +25,15 @@ pub fn (p Pos) line_str() string {
 pub fn (pos Pos) extend(end Pos) Pos {
 	return Pos{
 		...pos
-		len: end.pos - pos.pos + end.len
+		len:       end.pos - pos.pos + end.len
 		last_line: end.last_line
 	}
 }
 
 pub fn (pos Pos) extend_with_last_line(end Pos, last_line int) Pos {
 	return Pos{
-		len: end.pos - pos.pos + end.len
-		line_nr: pos.line_nr
-		pos: pos.pos
-		col: pos.col
+		...pos
+		len:       end.pos - pos.pos + end.len
 		last_line: last_line - 1
 	}
 }
@@ -43,13 +42,14 @@ pub fn (mut pos Pos) update_last_line(last_line int) {
 	pos.last_line = last_line - 1
 }
 
-[inline]
+@[inline]
 pub fn (tok &Token) pos() Pos {
 	return Pos{
-		len: tok.len
-		line_nr: tok.line_nr - 1
-		pos: tok.pos
+		file_idx:  tok.file_idx
+		len:       tok.len
+		line_nr:   tok.line_nr - 1
+		pos:       tok.pos
 		last_line: tok.line_nr - 1
-		col: tok.col - 1
+		col:       tok.col - 1
 	}
 }

@@ -1,11 +1,11 @@
 module io
 
-/// Eof error means that we reach the end of the stream.
+// Eof error means that we reach the end of the stream.
 pub struct Eof {
 	Error
 }
 
-// NotExpected is a generic error that means that we receave a not expecte error.
+// NotExpected is a generic error that means that we receave a not expected error.
 pub struct NotExpected {
 	cause string
 	code  int
@@ -29,17 +29,15 @@ mut:
 	read(mut buf []u8) !int
 }
 
-const (
-	read_all_len      = 10 * 1024
-	read_all_grow_len = 1024
-)
+pub const read_all_len = 10 * 1024
+pub const read_all_grow_len = 1024
 
 // ReadAllConfig allows options to be passed for the behaviour
 // of read_all.
 pub struct ReadAllConfig {
+pub:
 	read_to_end_of_stream bool
-mut:
-	reader Reader
+	reader                Reader
 }
 
 // read_all reads all bytes from a reader until either a 0 length read
@@ -48,16 +46,19 @@ pub fn read_all(config ReadAllConfig) ![]u8 {
 	mut r := config.reader
 	read_till_eof := config.read_to_end_of_stream
 
-	mut b := []u8{len: io.read_all_len}
+	mut b := []u8{len: read_all_len}
 	mut read := 0
 	for {
 		new_read := r.read(mut b[read..]) or { break }
+		if new_read < 0 {
+			return error('io.read_all: reader returned a negative read count (${new_read})')
+		}
 		read += new_read
-		if !read_till_eof && read == 0 {
+		if !read_till_eof && new_read == 0 {
 			break
 		}
 		if b.len == read {
-			unsafe { b.grow_len(io.read_all_grow_len) }
+			unsafe { b.grow_len(read_all_grow_len) }
 		}
 	}
 	return b[..read]
@@ -66,16 +67,19 @@ pub fn read_all(config ReadAllConfig) ![]u8 {
 // read_any reads any available bytes from a reader
 // (until the reader returns a read of 0 length).
 pub fn read_any(mut r Reader) ![]u8 {
-	mut b := []u8{len: io.read_all_len}
+	mut b := []u8{len: read_all_len}
 	mut read := 0
 	for {
 		new_read := r.read(mut b[read..]) or { return error('none') }
+		if new_read < 0 {
+			return error('io.read_any: reader returned a negative read count (${new_read})')
+		}
 		read += new_read
 		if new_read == 0 {
 			break
 		}
 		if b.len == read {
-			unsafe { b.grow_len(io.read_all_grow_len) }
+			unsafe { b.grow_len(read_all_grow_len) }
 		}
 	}
 	return b[..read]

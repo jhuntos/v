@@ -1,8 +1,9 @@
+// vtest retry: 3
 import db.sqlite
 import orm
 
 struct User {
-	id   int    [primary; sql: serial]
+	id   int @[primary; sql: serial]
 	name string
 }
 

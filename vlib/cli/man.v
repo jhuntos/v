@@ -4,52 +4,39 @@ import time
 
 fn man_flag() Flag {
 	return Flag{
-		flag: .bool
-		name: 'man'
-		description: 'Prints the auto-generated manpage.'
+		flag:        .bool
+		name:        'man'
+		description: 'Print the auto-generated manpage'
 	}
 }
 
 fn man_cmd() Command {
 	return Command{
-		name: 'man'
-		usage: '<subcommand>'
-		description: 'Prints the auto-generated manpage.'
-		execute: print_manpage_for_command
+		name:        'man'
+		usage:       '<subcommand>'
+		description: 'Print the auto-generated manpage'
+		execute:     print_manpage_for_command
 	}
 }
 
-// print_manpage_for_command prints the manpage for the
-// command or subcommand in `man_cmd` to stdout
-pub fn print_manpage_for_command(man_cmd Command) ! {
-	if man_cmd.args.len > 0 {
-		mut cmd := man_cmd.parent
-		for arg in man_cmd.args {
-			mut found := false
-			for sub_cmd in cmd.commands {
-				if sub_cmd.name == arg {
-					cmd = unsafe { &sub_cmd }
-					found = true
-					break
-				}
-			}
-			if !found {
-				args := man_cmd.args.join(' ')
-				println('Invalid command: ${args}')
+// print_manpage_for_command prints the manpage for the command or subcommand in `man_cmd` to stdout.
+pub fn print_manpage_for_command(cmd Command) ! {
+	if cmd.args.len > 0 {
+		for sub_cmd in cmd.commands {
+			if sub_cmd.matches(cmd.args[0]) {
+				man_cmd := unsafe { &sub_cmd }
+				print(man_cmd.manpage())
 				return
 			}
 		}
-		print(cmd.manpage())
-	} else {
-		if unsafe { man_cmd.parent != 0 } {
-			print(man_cmd.parent.manpage())
-		}
+		print('Invalid command: ${cmd.args.join(' ')}')
+	} else if cmd.parent != unsafe { nil } {
+		print(cmd.parent.manpage())
 	}
 }
 
-// manpage returns a `string` containing the mdoc(7) manpage for
-// this `Command`
-pub fn (cmd Command) manpage() string {
+// manpage returns a `string` containing the mdoc(7) manpage for this `Command`.
+pub fn (cmd &Command) manpage() string {
 	mut mdoc := '.Dd ${time.now().strftime('%B %d, %Y')}\n'
 	mdoc += '.Dt ${cmd.full_name().replace(' ', '-').to_upper()} 1\n'
 	mdoc += '.Os\n.Sh NAME\n.Nm ${cmd.full_name().replace(' ', '-')}\n.Nd ${cmd.description}\n'
@@ -89,6 +76,7 @@ pub fn (cmd Command) manpage() string {
 			.string, .string_array { mdoc += ' Ar string' }
 			else {}
 		}
+
 		mdoc += '\n'
 	}
 	for i in 0 .. cmd.required_args {
@@ -147,7 +135,11 @@ pub fn (cmd Command) manpage() string {
 		mdoc += '.Pp\nThe subcommands are as follows:\n'
 		mdoc += '.Bl -tag -width indent\n'
 		for c in cmd.commands {
-			mdoc += '.It Cm ${c.name}\n'
+			mdoc += '.It Cm ${c.name}'
+			if c.alias != '' {
+				mdoc += ' Pq Cm ${c.alias}'
+			}
+			mdoc += '\n'
 			if c.description != '' {
 				mdoc += '${c.description}\n'
 			}

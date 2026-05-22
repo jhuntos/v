@@ -1,14 +1,11 @@
 module main
 
-import gx
 import gg
 import time
 import math
 
-const (
-	size  = 700
-	scale = 50.0
-)
+const size = 700
+const scale = 50.0
 
 struct Context {
 mut:
@@ -16,19 +13,17 @@ mut:
 }
 
 fn main() {
-	mut context := &Context{
-		gg: 0
-	}
+	mut context := &Context{}
 	context.gg = gg.new_context(
-		width: size
-		height: size
-		font_size: 20
-		user_data: context
-		window_title: 'Graph builder'
+		width:         size
+		height:        size
+		font_size:     20
+		user_data:     context
+		window_title:  'Graph builder'
 		create_window: true
-		frame_fn: frame
-		resizable: true
-		bg_color: gx.white
+		frame_fn:      frame
+		resizable:     true
+		bg_color:      gg.white
 	)
 	context.gg.run()
 }
@@ -39,7 +34,7 @@ fn frame(mut ctx Context) {
 	ctx.gg.end()
 }
 
-[live]
+@[live]
 fn (ctx &Context) draw() {
 	s := gg.window_size()
 	mut w := s.width
@@ -48,17 +43,17 @@ fn (ctx &Context) draw() {
 		w /= 2
 		h /= 2
 	}
-	ctx.gg.draw_line(0, h / 2, w, h / 2, gx.gray) // x axis
-	ctx.gg.draw_line(w / 2, 0, w / 2, h, gx.gray) // y axis
+	ctx.gg.draw_line(0, h / 2, w, h / 2, gg.gray) // x axis
+	ctx.gg.draw_line(w / 2, 0, w / 2, h, gg.gray) // y axis
 	atime := f64(time.ticks() / 10)
 	stime := math.sin(2.0 * math.pi * f64(time.ticks() % 6000) / 6000)
 	mut y := 0.0
-	blue := gx.Color{
+	blue := gg.Color{
 		r: 100
 		g: 100
 		b: 200
 	}
-	red := gx.Color{
+	red := gg.Color{
 		r: 200
 		g: 100
 		b: 100
@@ -80,6 +75,7 @@ fn (ctx &Context) draw() {
 		ctx.gg.draw_rect_filled(f32((w / 2) + x * scale), f32((h / 2) - y * scale), 2,
 			(f32(y) * scale), blue)
 		ctx.gg.draw_rect_filled(f32((w / 2) + x * scale), f32((h / 2) + y * scale), 2,
+
 			(f32(y) * scale) + 32, red)
 	}
 }

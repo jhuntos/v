@@ -1,7 +1,6 @@
 module main
 
 import gg
-import gx
 
 const rate = f32(1) / 60 * 10
 
@@ -31,16 +30,15 @@ fn (mut anim Anim) advance() {
 
 fn main() {
 	mut app := &App{
-		gg: 0
 		anim: &Anim{}
 	}
 	app.gg = gg.new_context(
-		bg_color: gx.rgb(174, 198, 255)
-		width: 600
-		height: 400
+		bg_color:     gg.rgb(174, 198, 255)
+		width:        600
+		height:       400
 		window_title: 'Animated cubic Bézier curve'
-		frame_fn: frame
-		user_data: app
+		frame_fn:     frame
+		user_data:    app
 	)
 	app.gg.run()
 }
@@ -62,7 +60,7 @@ fn frame(mut app App) {
 	points := [p1_x, p1_y, ctrl_p1_x, ctrl_p1_y, ctrl_p2_x, ctrl_p2_y, p2_x, p2_y]
 
 	app.gg.begin()
-	app.gg.draw_cubic_bezier(points, gx.blue)
+	app.gg.draw_cubic_bezier(points, gg.blue)
 	app.gg.end()
 	app.anim.advance()
 }

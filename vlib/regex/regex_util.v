@@ -1,7 +1,7 @@
 /*
 regex 1.0 alpha
 
-Copyright (c) 2019-2023 Dario Deledda. All rights reserved.
+Copyright (c) 2019-2024 Dario Deledda. All rights reserved.
 Use of this source code is governed by an MIT license
 that can be found in the LICENSE file.
 */
@@ -20,7 +20,7 @@ pub fn regex_base(pattern string) (RE, int, int) {
 	// init regex
 	mut re := RE{}
 	re.prog = []Token{len: pattern.len + 1} // max program length, can not be longer then the pattern
-	re.cc = []CharClass{len: pattern.len} // can not be more char class the the length of the pattern
+	re.cc = []CharClass{len: pattern.len} // can not be more char class the length of the pattern
 	re.group_csave_flag = false // enable continuos group saving
 	re.group_max_nested = pattern.len >> 1 // set max 128 group nested
 	re.group_max = pattern.len >> 1 // we can't have more groups than the half of the pattern legth
@@ -38,7 +38,7 @@ pub fn regex_base(pattern string) (RE, int, int) {
 *
 ******************************************************************************/
 // get_group_bounds_by_name get a group boundaries by its name
-pub fn (re RE) get_group_bounds_by_name(group_name string) (int, int) {
+pub fn (re &RE) get_group_bounds_by_name(group_name string) (int, int) {
 	if group_name in re.group_map {
 		tmp_index := re.group_map[group_name] - 1
 		start := re.groups[tmp_index * 2]
@@ -49,7 +49,7 @@ pub fn (re RE) get_group_bounds_by_name(group_name string) (int, int) {
 }
 
 // get_group_by_name get a group boundaries by its name
-pub fn (re RE) get_group_by_name(in_txt string, group_name string) string {
+pub fn (re &RE) get_group_by_name(in_txt string, group_name string) string {
 	if group_name in re.group_map {
 		tmp_index := re.group_map[group_name] - 1
 		start := re.groups[tmp_index * 2]
@@ -62,7 +62,7 @@ pub fn (re RE) get_group_by_name(in_txt string, group_name string) string {
 }
 
 // get_group_by_id get a group string by its id
-pub fn (re RE) get_group_by_id(in_txt string, group_id int) string {
+pub fn (re &RE) get_group_by_id(in_txt string, group_id int) string {
 	if group_id < (re.groups.len >> 1) {
 		index := group_id * 2
 		start := re.groups[index]
@@ -75,7 +75,7 @@ pub fn (re RE) get_group_by_id(in_txt string, group_id int) string {
 }
 
 // get_group_by_id get a group boundaries by its id
-pub fn (re RE) get_group_bounds_by_id(group_id int) (int, int) {
+pub fn (re &RE) get_group_bounds_by_id(group_id int) (int, int) {
 	if group_id < re.group_count {
 		index := group_id * 2
 		return re.groups[index], re.groups[index + 1]
@@ -90,7 +90,7 @@ pub:
 }
 
 // get_group_list return a list of Re_group for the found groups
-pub fn (re RE) get_group_list() []Re_group {
+pub fn (re &RE) get_group_list() []Re_group {
 	mut res := []Re_group{len: re.groups.len >> 1}
 	mut gi := 0
 	// println("len: ${re.groups.len} groups: ${re.groups}")
@@ -104,7 +104,7 @@ pub fn (re RE) get_group_list() []Re_group {
 			if txt_st >= 0 && txt_en > txt_st {
 				tmp := Re_group{
 					start: re.groups[gi]
-					end: re.groups[gi + 1]
+					end:   re.groups[gi + 1]
 				}
 				// println(tmp)
 				res[gi >> 1] = tmp
@@ -123,7 +123,7 @@ pub fn (re RE) get_group_list() []Re_group {
 *
 ******************************************************************************/
 // match_string Match the pattern with the in_txt string
-[direct_array_access]
+@[direct_array_access]
 pub fn (re &RE) match_string(in_txt string) (int, int) {
 	unsafe {
 		start, mut end := re.match_base(in_txt.str, in_txt.len + 1)
@@ -131,17 +131,12 @@ pub fn (re &RE) match_string(in_txt string) (int, int) {
 			end = in_txt.len
 		}
 
-		if start >= 0 && end > start {
-			if (re.flag & f_ms) != 0 && start > 0 {
-				return no_match_found, 0
+		if start >= 0 && end >= start {
+			ok, _ := re.check_anchors(in_txt, start, end)
+			if ok {
+				return start, end
 			}
-			if (re.flag & f_me) != 0 && end < in_txt.len {
-				if in_txt[end] in new_line_list {
-					return start, end
-				}
-				return no_match_found, 0
-			}
-			return start, end
+			return no_match_found, 0
 		}
 		return start, end
 	}
@@ -158,15 +153,32 @@ pub fn (re &RE) matches_string(in_txt string) bool {
 * Finders
 *
 ******************************************************************************/
+@[direct_array_access; inline]
+fn (re &RE) check_anchors(in_txt string, start int, end int) (bool, bool) {
+	// `^` means start of the source string.
+	if (re.flag & f_ms) != 0 && start > 0 {
+		return false, true
+	}
+	// `$` means end of the source string, or right before a newline.
+	if (re.flag & f_me) != 0 && end < in_txt.len {
+		if in_txt[end] in new_line_list {
+			return true, false
+		}
+		// When `^` is also present, scanning forward can never recover.
+		return false, (re.flag & f_ms) != 0
+	}
+	return true, false
+}
+
 /*
 // find internal implementation HERE for reference do not remove!!
-[direct_array_access]
+@[direct_array_access]
 fn (mut re RE) find_imp(in_txt string) (int,int) {
 	old_flag := re.flag
 	re.flag |= f_src  // enable search mode
 
 	start, mut end := re.match_base(in_txt.str, in_txt.len + 1)
-	//print("Find [$start,$end] '${in_txt[start..end]}'")
+	//print("Find [${start},${end}] '${in_txt[start..end]}'")
 	if end > in_txt.len {
 		end = in_txt.len
 	}
@@ -180,21 +192,31 @@ fn (mut re RE) find_imp(in_txt string) (int,int) {
 */
 
 // find try to find the first match in the input string
-[direct_array_access]
+@[direct_array_access]
 pub fn (mut re RE) find(in_txt string) (int, int) {
 	// old_flag := re.flag
 	// re.flag |= f_src  // enable search mode
 
 	mut i := 0
-	for i < in_txt.len {
+	for i <= in_txt.len {
 		mut s := -1
 		mut e := -1
 		unsafe {
 			// tmp_str := tos(in_txt.str + i, in_txt.len - i)
-			// println("Check: [$tmp_str]")
+			// println("Check: [${tmp_str}]")
 			s, e = re.match_base(in_txt.str + i, in_txt.len - i + 1)
 
-			if s >= 0 && e > s {
+			if s >= 0 && e >= s {
+				abs_start := i + s
+				abs_end := i + e
+				ok, stop_scan := re.check_anchors(in_txt, abs_start, abs_end)
+				if !ok {
+					if stop_scan {
+						break
+					}
+					i++
+					continue
+				}
 				// println("find match in: ${i+s},${i+e} [${in_txt[i+s..i+e]}]")
 				// re.flag = old_flag
 				mut gi := 0
@@ -202,15 +224,7 @@ pub fn (mut re RE) find(in_txt string) (int, int) {
 					re.groups[gi] += i
 					gi++
 				}
-				// when ^ (f_ms) is used, it must match on beginning of string
-				if (re.flag & f_ms) != 0 && s > 0 {
-					break
-				}
-				// when $ (f_me) is used, it must match on ending of string
-				if (re.flag & f_me) != 0 && i + e < in_txt.len {
-					break
-				}
-				return i + s, i + e
+				return abs_start, abs_end
 			}
 			i++
 		}
@@ -220,7 +234,7 @@ pub fn (mut re RE) find(in_txt string) (int, int) {
 }
 
 // find try to find the first match in the input string strarting from start index
-[direct_array_access]
+@[direct_array_access]
 pub fn (mut re RE) find_from(in_txt string, start int) (int, int) {
 	old_flag := re.flag
 	// re.flag |= f_src // enable search mode
@@ -229,7 +243,7 @@ pub fn (mut re RE) find_from(in_txt string, start int) (int, int) {
 	if i < 0 {
 		return -1, -1
 	}
-	for i < in_txt.len {
+	for i <= in_txt.len {
 		//--- speed references ---
 
 		mut s := -1
@@ -242,7 +256,17 @@ pub fn (mut re RE) find_from(in_txt string, start int) (int, int) {
 		//------------------------
 		// s,e = re.find_imp(in_txt[i..])
 		//------------------------
-		if s >= 0 && e > s {
+		if s >= 0 && e >= s {
+			abs_start := i + s
+			abs_end := i + e
+			ok, stop_scan := re.check_anchors(in_txt, abs_start, abs_end)
+			if !ok {
+				if stop_scan {
+					break
+				}
+				i++
+				continue
+			}
 			// println("find match in: ${i+s},${i+e} [${in_txt[i+s..i+e]}]")
 			re.flag = old_flag
 			mut gi := 0
@@ -250,7 +274,7 @@ pub fn (mut re RE) find_from(in_txt string, start int) (int, int) {
 				re.groups[gi] += i
 				gi++
 			}
-			return i + s, i + e
+			return abs_start, abs_end
 		} else {
 			i++
 		}
@@ -267,7 +291,7 @@ pub fn (mut re RE) find_from(in_txt string, start int) (int, int) {
 // mut re := regex.regex_opt('f|t[eo]+')?
 // res := re.find_all(blurb) // [0, 3, 12, 15, 20, 23, 28, 31, 33, 39]
 // ```
-[direct_array_access]
+@[direct_array_access]
 pub fn (mut re RE) find_all(in_txt string) []int {
 	// old_flag := re.flag
 	// re.flag |= f_src // enable search mode
@@ -275,19 +299,33 @@ pub fn (mut re RE) find_all(in_txt string) []int {
 	mut i := 0
 	mut res := []int{}
 
-	for i < in_txt.len {
+	for i <= in_txt.len {
 		mut s := -1
 		mut e := -1
 		unsafe {
 			// tmp_str := in_txt[i..]
 			// tmp_str := tos(in_txt.str + i, in_txt.len - i)
-			// println("Check: [$tmp_str]")
+			// println("Check: [${tmp_str}]")
 			s, e = re.match_base(in_txt.str + i, in_txt.len + 1 - i)
 
-			if s >= 0 && e > s {
-				res << i + s
-				res << i + e
-				i += e
+			if s >= 0 && e >= s {
+				abs_start := i + s
+				abs_end := i + e
+				ok, stop_scan := re.check_anchors(in_txt, abs_start, abs_end)
+				if !ok {
+					if stop_scan {
+						break
+					}
+					i++
+					continue
+				}
+				res << abs_start
+				res << abs_end
+				if e > s {
+					i += e
+				} else {
+					i++
+				}
 				continue
 			}
 			/*
@@ -320,23 +358,18 @@ pub fn (mut re RE) split(in_txt string) []string {
 		return [in_txt]
 	}
 	for i := 0; i < pos.len; i += 2 {
-		if pos[i] == 0 {
-			continue
-		}
 		if i == 0 {
 			sections << in_txt[..pos[i]]
 		} else {
 			sections << in_txt[pos[i - 1]..pos[i]]
 		}
 	}
-	if pos[pos.len - 1] != in_txt.len {
-		sections << in_txt[pos[pos.len - 1]..]
-	}
+	sections << in_txt[pos[pos.len - 1]..]
 	return sections
 }
 
 // find_all_str find all the non overlapping occurrences of the match pattern, return a string list
-[direct_array_access]
+@[direct_array_access]
 pub fn (mut re RE) find_all_str(in_txt string) []string {
 	// old_flag := re.flag
 	// re.flag |= f_src // enable search mode
@@ -344,21 +377,35 @@ pub fn (mut re RE) find_all_str(in_txt string) []string {
 	mut i := 0
 	mut res := []string{}
 
-	for i < in_txt.len {
+	for i <= in_txt.len {
 		mut s := -1
 		mut e := -1
 		unsafe {
 			// tmp_str := in_txt[i..]
 			// tmp_str := tos(in_txt.str + i, in_txt.len - i)
-			// println("Check: [$tmp_str]")
+			// println("Check: [${tmp_str}]")
 			s, e = re.match_base(in_txt.str + i, in_txt.len + 1 - i)
 
-			if s >= 0 && e > s {
+			if s >= 0 && e >= s {
+				abs_start := i + s
+				abs_end := i + e
+				ok, stop_scan := re.check_anchors(in_txt, abs_start, abs_end)
+				if !ok {
+					if stop_scan {
+						break
+					}
+					i++
+					continue
+				}
 				tmp_str := tos(in_txt.str + i, in_txt.len - i)
 				mut tmp_e := if e > tmp_str.len { tmp_str.len } else { e }
-				// println("Found: $s:$e [${tmp_str[s..e]}]")
-				res << tmp_str[..tmp_e]
-				i += e
+				// println("Found: ${s}:${e} [${tmp_str[s..e]}]")
+				res << tmp_str[s..tmp_e]
+				if e > s {
+					i += e
+				} else {
+					i++
+				}
 				continue
 			}
 		}
@@ -417,7 +464,7 @@ pub fn (mut re RE) replace_by_fn(in_txt string, repl_fn FnReplace) string {
 	mut last_end := 0
 
 	for i < in_txt.len {
-		// println("Find Start. $i [${in_txt[i..]}]")
+		// println("Find Start. ${i} [${in_txt[i..]}]")
 		s, e := re.find_from(in_txt, i)
 		// println("Find End.")
 		if s >= 0 && e > s {
@@ -433,7 +480,7 @@ pub fn (mut re RE) replace_by_fn(in_txt string, repl_fn FnReplace) string {
 			}
 			*/
 			repl := repl_fn(re, in_txt, s, e)
-			// println("repl res: $repl")
+			// println("repl res: ${repl}")
 			res.write_string(repl)
 			// res.write_string("[[${in_txt[s..e]}]]")
 
@@ -451,7 +498,7 @@ pub fn (mut re RE) replace_by_fn(in_txt string, repl_fn FnReplace) string {
 	return res.str()
 }
 
-fn (re RE) parsed_replace_string(in_txt string, repl string) string {
+fn (re &RE) parsed_replace_string(in_txt string, repl string) string {
 	str_lst := repl.split('\\')
 	mut res := str_lst[0]
 	mut i := 1
@@ -461,7 +508,7 @@ fn (re RE) parsed_replace_string(in_txt string, repl string) string {
 		if tmp.len > 0 && tmp[0] >= `0` && tmp[0] <= `9` {
 			group_id := int(tmp[0] - `0`)
 			group := re.get_group_by_id(in_txt, group_id)
-			// println("group: $group_id [$group]")
+			// println("group: ${group_id} [${group}]")
 			res += '${group}${tmp[1..]}'
 		} else {
 			res += '\\' + tmp
@@ -472,14 +519,14 @@ fn (re RE) parsed_replace_string(in_txt string, repl string) string {
 }
 
 // replace return a string where the matches are replaced with the repl_str string,
-// this function support use groups in the replace string
+// this function supports groups in the replace string
 pub fn (mut re RE) replace(in_txt string, repl_str string) string {
 	mut i := 0
 	mut res := strings.new_builder(in_txt.len)
 	mut last_end := 0
 
 	for i < in_txt.len {
-		// println("Find Start. $i [${in_txt[i..]}]")
+		// println("Find Start. ${i} [${in_txt[i..]}]")
 		s, e := re.find_from(in_txt, i)
 		// println("Find End.")
 		if s >= 0 && e > s {
@@ -496,7 +543,7 @@ pub fn (mut re RE) replace(in_txt string, repl_str string) string {
 			*/
 			// repl := repl_fn(re, in_txt, s, e)
 			repl := re.parsed_replace_string(in_txt, repl_str)
-			// println("repl res: $repl")
+			// println("repl res: ${repl}")
 			res.write_string(repl)
 			// res.write_string("[[${in_txt[s..e]}]]")
 
@@ -514,7 +561,7 @@ pub fn (mut re RE) replace(in_txt string, repl_str string) string {
 	return res.str()
 }
 
-// replace_n return a string where the firts count matches are replaced with the repl_str string,
+// replace_n return a string where the first count matches are replaced with the repl_str string,
 // if count is > 0 the replace began from the start of the string toward the end
 // if count is < 0 the replace began from the end of the string toward the start
 // if count is 0 do nothing

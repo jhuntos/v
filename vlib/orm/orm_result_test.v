@@ -1,12 +1,13 @@
+// vtest retry: 3
 import db.sqlite
 
 struct Account {
-	id   int    [primary; sql: serial]
+	id   int @[primary; sql: serial]
 	name string
 }
 
 struct Note {
-	id      int    [primary; sql: serial]
+	id      int @[primary; sql: serial]
 	content string
 }
 
@@ -59,6 +60,12 @@ fn test_print_results() {
 	sql db {
 		insert account into Account
 	}!
+
+	i := sql db {
+		insert account into Account
+	}!
+
+	println(i)
 
 	count := sql db {
 		select count from Account

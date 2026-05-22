@@ -1,13 +1,15 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module checker
 
 import v.ast
 import v.token
+import encoding.utf8.validate
+import v.util
 
 fn (mut c Checker) get_default_fmt(ftyp ast.Type, typ ast.Type) u8 {
-	if ftyp.has_flag(.option) || ftyp.has_flag(.result) {
+	if ftyp.has_option_or_result() {
 		return `s`
 	} else if typ.is_float() {
 		return `g`
@@ -31,8 +33,8 @@ fn (mut c Checker) get_default_fmt(ftyp ast.Type, typ ast.Type) u8 {
 			return `s`
 		}
 		if ftyp in [ast.string_type, ast.bool_type]
-			|| sym.kind in [.enum_, .array, .array_fixed, .struct_, .map, .multi_return, .sum_type, .interface_, .none_]
-			|| ftyp.has_flag(.option) || ftyp.has_flag(.result) || sym.has_method('str') {
+			|| sym.kind in [.enum, .array, .array_fixed, .struct, .generic_inst, .map, .multi_return, .sum_type, .interface, .aggregate, .none]
+			|| ftyp.has_option_or_result() || sym.has_method('str') {
 			return `s`
 		} else {
 			return `_`
@@ -40,25 +42,73 @@ fn (mut c Checker) get_default_fmt(ftyp ast.Type, typ ast.Type) u8 {
 	}
 }
 
-fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
-	inside_println_arg_save := c.inside_println_arg
-	c.inside_println_arg = true
-	for i, mut expr in node.exprs {
-		mut ftyp := c.expr(mut expr)
-		if c.is_comptime_var(expr) {
-			ctyp := c.get_comptime_var_type(expr)
-			if ctyp != ast.void_type {
-				ftyp = ctyp
+fn (mut c Checker) get_string_inter_default_fmt(expr ast.Expr, ftyp ast.Type, typ ast.Type) u8 {
+	if expr is ast.Ident {
+		if expr.obj is ast.Var {
+			obj := expr.obj
+			if obj.typ.is_ptr() && !obj.is_arg {
+				pointee_typ := obj.typ.deref()
+				if c.table.final_sym(pointee_typ).kind != .enum {
+					final_pointee_typ := c.table.final_type(pointee_typ)
+					if final_pointee_typ in [ast.string_type, ast.bool_type] {
+						return `p`
+					}
+				}
 			}
 		}
-		if ftyp == ast.void_type {
+	}
+	return c.get_default_fmt(ftyp, typ)
+}
+
+fn (mut c Checker) check_string_inter_lit_format_expr(mut expr ast.Expr, what string) {
+	if expr is ast.EmptyExpr {
+		return
+	}
+	expected_type := c.expected_type
+	c.expected_type = ast.int_type
+	mut typ := c.expr(mut expr)
+	c.expected_type = expected_type
+	typ = c.type_resolver.get_type_or_default(expr, c.check_expr_option_or_result_call(expr, typ))
+	typ = c.table.unalias_num_type(typ)
+	if typ != ast.int_type && !typ.is_int_literal() {
+		c.error('${what} expression should return `int`', expr.pos())
+	}
+}
+
+fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
+	inside_interface_deref_save := c.inside_interface_deref
+	c.inside_interface_deref = true
+	for i, mut expr in node.exprs {
+		expected_type := c.expected_type
+		c.expected_type = ast.string_type
+		mut ftyp := c.expr(mut expr)
+		c.expected_type = expected_type
+		ftyp = c.type_resolver.get_type_or_default(expr,
+			c.check_expr_option_or_result_call(expr, ftyp))
+		if ftyp == ast.void_type || ftyp == 0 {
 			c.error('expression does not return a value', expr.pos())
 		} else if ftyp == ast.char_type && ftyp.nr_muls() == 0 {
 			c.error('expression returning type `char` cannot be used in string interpolation directly, print its address or cast it to an integer instead',
 				expr.pos())
+		} else if c.fail_if_private_implicit_str(ftyp, expr.pos(), 'interpolate') {
+			return ast.string_type
 		}
+		if ftyp == 0 {
+			return ast.void_type
+		}
+		c.markused_string_inter_lit(mut node, ftyp)
 		c.fail_if_unreadable(expr, ftyp, 'interpolation object')
 		node.expr_types << ftyp
+		if i < node.fwidth_exprs.len {
+			mut width_expr := node.fwidth_exprs[i]
+			c.check_string_inter_lit_format_expr(mut width_expr, 'width')
+			node.fwidth_exprs[i] = width_expr
+		}
+		if i < node.precision_exprs.len {
+			mut precision_expr := node.precision_exprs[i]
+			c.check_string_inter_lit_format_expr(mut precision_expr, 'precision')
+			node.precision_exprs[i] = precision_expr
+		}
 		ftyp_sym := c.table.sym(ftyp)
 		typ := if ftyp_sym.kind == .alias && !ftyp_sym.has_method('str') {
 			c.table.unalias_num_type(ftyp)
@@ -66,19 +116,27 @@ fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
 			ftyp
 		}
 		mut fmt := node.fmts[i]
+		// During generic recheck, reset auto-determined format specifiers
+		// since the type may have changed between instantiations
+		if c.table.cur_concrete_types.len > 0 && !node.need_fmts[i] && fmt != `_` {
+			fmt = `_`
+		}
 		// analyze and validate format specifier
 		if fmt !in [`E`, `F`, `G`, `e`, `f`, `g`, `d`, `u`, `x`, `X`, `o`, `c`, `s`, `S`, `p`,
-			`b`, `_`] {
+			`b`, `_`, `r`, `R`] {
 			c.error('unknown format specifier `${fmt:c}`', node.fmt_poss[i])
 		}
 		if fmt == `_` { // set default representation for type if none has been given
-			fmt = c.get_default_fmt(ftyp, typ)
+			fmt = c.get_string_inter_default_fmt(expr, ftyp, typ)
 			if fmt == `_` {
-				if typ != ast.void_type {
+				if typ != ast.void_type && !(typ.has_flag(.generic) && (c.inside_lambda
+					|| c.table.cur_concrete_types.len > 0
+					|| (c.table.cur_fn != unsafe { nil } && c.table.cur_fn.generic_names.len > 0))) {
 					c.error('no known default format for type `${c.table.get_type_name(ftyp)}`',
 						node.fmt_poss[i])
 				}
-			} else if c.is_comptime_var(expr) && c.get_comptime_var_type(expr) != ast.void_type {
+			} else if c.comptime.is_comptime(expr)
+				&& c.type_resolver.get_type_or_default(expr, ast.void_type) != ast.void_type {
 				// still `_` placeholder for comptime variable without specifier
 				node.need_fmts[i] = false
 			} else {
@@ -86,7 +144,9 @@ fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
 				node.need_fmts[i] = false
 			}
 		} else { // check if given format specifier is valid for type
-			if node.precisions[i] != 987698 && !typ.is_float() {
+			has_dynamic_precision := i < node.precision_exprs.len
+				&& node.precision_exprs[i] !is ast.EmptyExpr
+			if (node.precisions[i] != 987698 || has_dynamic_precision) && !typ.is_float() {
 				c.error('precision specification only valid for float types', node.fmt_poss[i])
 			}
 			if node.pluss[i] && !typ.is_number() {
@@ -94,23 +154,23 @@ fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
 			}
 			if ((typ.is_unsigned() && fmt !in [`u`, `x`, `X`, `o`, `c`, `b`])
 				|| (typ.is_signed() && fmt !in [`d`, `x`, `X`, `o`, `c`, `b`])
-				|| (typ.is_int_literal()
-				&& fmt !in [`d`, `c`, `x`, `X`, `o`, `u`, `x`, `X`, `o`, `b`])
+				|| (typ.is_int_literal() && fmt !in [`d`, `c`, `x`, `X`, `o`, `u`, `b`])
 				|| (typ.is_float() && fmt !in [`E`, `F`, `G`, `e`, `f`, `g`])
 				|| (typ.is_pointer() && fmt !in [`p`, `x`, `X`])
-				|| (typ.is_string() && fmt !in [`s`, `S`])
+				|| (typ.is_string() && fmt !in [`s`, `S`, `r`, `R`])
 				|| (typ.idx() in [ast.i64_type_idx, ast.f64_type_idx] && fmt == `c`))
 				&& !(typ.is_ptr() && fmt in [`p`, `x`, `X`]) {
 				c.error('illegal format specifier `${fmt:c}` for type `${c.table.get_type_name(ftyp)}`',
 					node.fmt_poss[i])
 			}
-			if c.table.final_sym(typ).kind in [.array, .array_fixed, .struct_, .interface_, .none_, .map, .sum_type]
-				&& fmt in [`E`, `F`, `G`, `e`, `f`, `g`, `d`, `u`, `x`, `X`, `o`, `c`, `p`, `b`]
+			if c.table.final_sym(typ).kind in [.array, .array_fixed, .struct, .interface, .none, .map, .sum_type]
+				&& fmt in [`E`, `F`, `G`, `e`, `f`, `g`, `d`, `u`, `x`, `X`, `o`, `c`, `p`, `b`, `r`, `R`]
 				&& !(typ.is_ptr() && fmt in [`p`, `x`, `X`]) {
 				c.error('illegal format specifier `${fmt:c}` for type `${c.table.get_type_name(ftyp)}`',
 					node.fmt_poss[i])
 			}
 			node.need_fmts[i] = fmt != c.get_default_fmt(ftyp, typ)
+				|| (typ.is_float() && fmt in [`g`, `G`])
 		}
 		// check recursive str
 		if c.table.cur_fn != unsafe { nil } && c.table.cur_fn.is_method
@@ -118,28 +178,94 @@ fn (mut c Checker) string_inter_lit(mut node ast.StringInterLiteral) ast.Type {
 			c.error('cannot call `str()` method recursively', expr.pos())
 		}
 	}
-	c.inside_println_arg = inside_println_arg_save
+	c.inside_interface_deref = inside_interface_deref_save
+	if c.pref.warn_about_allocs {
+		c.warn_alloc('string interpolation', node.pos)
+	}
 	return ast.string_type
 }
 
 const unicode_lit_overflow_message = 'unicode character exceeds max allowed value of 0x10ffff, consider using a unicode literal (\\u####)'
 
+fn is_source_char_escaped(source string, idx int) bool {
+	mut backslashes := 0
+	mut i := idx - 1
+	for i >= 0 && source[i] == `\\` {
+		backslashes++
+		i--
+	}
+	return (backslashes & 1) == 1
+}
+
+fn raw_string_literal_source(source string, approx_pos int) ?string {
+	if source.len == 0 {
+		return none
+	}
+	mut hint := approx_pos
+	if hint < 0 {
+		hint = 0
+	} else if hint >= source.len {
+		hint = source.len - 1
+	}
+	mut start := hint
+	for start >= 0 {
+		if source[start] in [`'`, `"`] && !is_source_char_escaped(source, start) {
+			quote := source[start]
+			is_raw := start > 0 && source[start - 1] == `r`
+			mut end := start + 1
+			for end < source.len {
+				if source[end] == quote && (is_raw || !is_source_char_escaped(source, end)) {
+					if end >= hint {
+						return source[start..end + 1]
+					}
+					break
+				}
+				end++
+			}
+		}
+		start--
+	}
+	return none
+}
+
+fn (c &Checker) source_string_literal_is_valid_utf8(node ast.StringLiteral) bool {
+	if node.pos.file_idx < 0 || node.pos.file_idx >= c.table.filelist.len {
+		return validate.utf8_string(node.val)
+	}
+	source := util.read_file(c.table.filelist[node.pos.file_idx]) or {
+		return validate.utf8_string(node.val)
+	}
+	raw_source := raw_string_literal_source(source, node.pos.pos) or {
+		return validate.utf8_string(node.val)
+	}
+	return validate.utf8_string(raw_source)
+}
+
 // unicode character literals are limited to a maximum value of 0x10ffff
 // https://stackoverflow.com/questions/52203351/why-unicode-is-restricted-to-0x10ffff
-[direct_array_access]
+@[direct_array_access]
 fn (mut c Checker) string_lit(mut node ast.StringLiteral) ast.Type {
+	// Validate the bytes that came from the source file, not the decoded string value.
+	// `\x..` escapes are allowed to produce arbitrary bytes intentionally.
+	valid_utf8 := c.source_string_literal_is_valid_utf8(node)
+	if !valid_utf8 {
+		c.note('invalid utf8 byte sequence in string literal', node.pos)
+	}
 	mut idx := 0
 	for idx < node.val.len {
 		match node.val[idx] {
 			`\\` {
 				mut start_pos := token.Pos{
 					...node.pos
-					col: node.pos.col + 1 + idx
+					col: u16(node.pos.col + 1 + idx)
 				}
 				start_idx := idx
 				idx++
 				next_ch := node.val[idx] or { return ast.string_type }
-				if next_ch == `u` {
+				if next_ch == `\\` {
+					// ignore escaping char
+					idx++
+				} else if next_ch == `u` {
 					idx++
 					mut ch := node.val[idx] or { return ast.string_type }
 					mut hex_char_count := 0
@@ -155,15 +281,16 @@ fn (mut c Checker) string_lit(mut node ast.StringLiteral) ast.Type {
 								first_digit := node.val[idx - 5] - 48
 								second_digit := node.val[idx - 4] - 48
 								if first_digit > 1 {
-									c.error(checker.unicode_lit_overflow_message, end_pos)
+									c.error(unicode_lit_overflow_message, end_pos)
 								} else if first_digit == 1 && second_digit > 0 {
-									c.error(checker.unicode_lit_overflow_message, end_pos)
+									c.error(unicode_lit_overflow_message, end_pos)
 								}
 							}
 							else {
-								c.error(checker.unicode_lit_overflow_message, end_pos)
+								c.error(unicode_lit_overflow_message, end_pos)
 							}
 						}
+
 						idx++
 						ch = node.val[idx] or { return ast.string_type }
 					}
@@ -194,20 +321,20 @@ fn (mut c Checker) int_lit(mut node ast.IntegerLiteral) ast.Type {
 		// can not be a too large number, no need for more expensive checks
 		return ast.int_literal_type
 	}
-	lit := node.val.replace('_', '').all_after('-').to_upper()
+	lit := node.val.replace('_', '').all_after('-').to_upper_ascii()
 	is_neg := node.val.starts_with('-')
 	if lit.len > 2 && lit[0] == `0` && lit[1] in [`B`, `X`, `O`] {
-		if lohi := checker.iencoding_map[lit[1]] {
+		if lohi := iencoding_map[lit[1]] {
 			c.check_num_literal(lohi, is_neg, lit[2..]) or { c.num_lit_overflow_error(node) }
 		}
 	} else {
-		lohi := checker.iencoding_map[`_`]
+		lohi := iencoding_map[`_`]
 		c.check_num_literal(lohi, is_neg, lit) or { c.num_lit_overflow_error(node) }
 	}
 	return ast.int_literal_type
 }
 
-[direct_array_access]
+@[direct_array_access]
 fn (mut c Checker) check_num_literal(lohi LoHiLimit, is_neg bool, lit string) ! {
 	limit := if is_neg { lohi.lower } else { lohi.higher }
 	if lit.len < limit.len {
@@ -228,5 +355,8 @@ fn (mut c Checker) check_num_literal(lohi LoHiLimit, is_neg bool, lit string) ! 
 }
 
 fn (mut c Checker) num_lit_overflow_error(node &ast.IntegerLiteral) {
+	if c.inside_integer_literal_cast {
+		return
+	}
 	c.error('integer literal ${node.val} overflows int', node.pos)
 }

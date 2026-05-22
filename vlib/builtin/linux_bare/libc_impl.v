@@ -4,10 +4,11 @@ import dlmalloc
 
 __global global_allocator dlmalloc.Dlmalloc
 
-[unsafe]
-pub fn memcpy(dest &C.void, src &C.void, n usize) &C.void {
+@[export: 'memcpy']
+@[unsafe]
+pub fn memcpy(dest voidptr, const_src voidptr, n usize) voidptr {
 	dest_ := unsafe { &u8(dest) }
-	src_ := unsafe { &u8(src) }
+	src_ := unsafe { &u8(const_src) }
 	unsafe {
 		for i in 0 .. int(n) {
 			dest_[i] = src_[i]
@@ -16,22 +17,24 @@ pub fn memcpy(dest &C.void, src &C.void, n usize) &C.void {
 	return unsafe { dest }
 }
 
-[export: 'malloc']
-[unsafe]
-fn __malloc(n usize) &C.void {
+@[export: 'malloc']
+@[unsafe]
+fn __malloc(n usize) voidptr {
 	return unsafe { global_allocator.malloc(n) }
 }
 
-[unsafe]
-fn strlen(_s &C.void) usize {
-	s := unsafe { &u8(_s) }
+@[export: 'strlen']
+@[unsafe]
+fn strlen(const_s voidptr) usize {
+	s := unsafe { &u8(const_s) }
 	mut i := 0
 	for ; unsafe { s[i] } != 0; i++ {}
 	return usize(i)
 }
 
-[unsafe]
-fn realloc(old_area &C.void, new_size usize) &C.void {
+@[export: 'realloc']
+@[unsafe]
+fn realloc(old_area voidptr, new_size usize) voidptr {
 	if old_area == 0 {
 		return unsafe { malloc(int(new_size)) }
 	}
@@ -39,7 +42,7 @@ fn realloc(old_area &C.void, new_size usize) &C.void {
 		unsafe { free(old_area) }
 		return 0
 	}
-	old_size := unsafe { *(&u64(old_area - sizeof(u64))) }
+	old_size := unsafe { *(&u64(&u64(old_area) - sizeof(u64))) }
 	if u64(new_size) <= old_size {
 		return unsafe { old_area }
 	} else {
@@ -50,8 +53,9 @@ fn realloc(old_area &C.void, new_size usize) &C.void {
 	}
 }
 
-[unsafe]
-fn memset(s &C.void, c int, n usize) &C.void {
+@[export: 'memset']
+@[unsafe]
+fn memset(s voidptr, c int, n usize) voidptr {
 	mut s_ := unsafe { &char(s) }
 	for i in 0 .. int(n) {
 		unsafe {
@@ -61,10 +65,11 @@ fn memset(s &C.void, c int, n usize) &C.void {
 	return unsafe { s }
 }
 
-[unsafe]
-fn memmove(dest &C.void, src &C.void, n usize) &C.void {
+@[export: 'memmove']
+@[unsafe]
+fn memmove(dest voidptr, const_src voidptr, n usize) voidptr {
 	dest_ := unsafe { &u8(dest) }
-	src_ := unsafe { &u8(src) }
+	src_ := unsafe { &u8(const_src) }
 	mut temp_buf := unsafe { malloc(int(n)) }
 	for i in 0 .. int(n) {
 		unsafe {
@@ -81,9 +86,9 @@ fn memmove(dest &C.void, src &C.void, n usize) &C.void {
 	return unsafe { dest }
 }
 
-[export: 'calloc']
-[unsafe]
-fn __calloc(nmemb usize, size usize) &C.void {
+@[export: 'calloc']
+@[unsafe]
+fn __calloc(nmemb usize, size usize) voidptr {
 	new_area := unsafe { malloc(int(nmemb) * int(size)) }
 	unsafe { memset(new_area, 0, nmemb * size) }
 	return new_area
@@ -95,9 +100,10 @@ fn getchar() int {
 	return int(x)
 }
 
-fn memcmp(a &C.void, b &C.void, n usize) int {
-	a_ := unsafe { &u8(a) }
-	b_ := unsafe { &u8(b) }
+@[export: 'memcmp']
+fn memcmp(const_a voidptr, const_b voidptr, n usize) int {
+	a_ := unsafe { &u8(const_a) }
+	b_ := unsafe { &u8(const_b) }
 	for i in 0 .. int(n) {
 		if unsafe { a_[i] != b_[i] } {
 			unsafe {
@@ -108,9 +114,9 @@ fn memcmp(a &C.void, b &C.void, n usize) int {
 	return 0
 }
 
-[export: 'free']
-[unsafe]
-fn __free(ptr &C.void) {
+@[export: 'free']
+@[unsafe]
+fn __free(ptr voidptr) {
 	unsafe {
 		global_allocator.free_(ptr)
 	}
@@ -142,7 +148,7 @@ pub fn write(fd i64, buf &u8, count u64) i64 {
 	return x
 }
 
-[noreturn]
+@[noreturn]
 fn bare_panic(msg string) {
 	println('V panic' + msg)
 	exit(1)
@@ -152,13 +158,13 @@ fn bare_backtrace() string {
 	return 'backtraces are not available with `-freestanding`'
 }
 
-[export: 'exit']
-[noreturn]
+@[export: 'exit']
+@[noreturn]
 fn __exit(code int) {
 	sys_exit(code)
 }
 
-[export: 'qsort']
+@[export: 'qsort']
 fn __qsort(base voidptr, nmemb usize, size usize, sort_cb FnSortCB) {
 	panic('qsort() is not yet implemented in `-freestanding`')
 }

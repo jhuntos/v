@@ -7,11 +7,18 @@ mut:
 	current_pos_datetime int
 }
 
-fn new_date_time_parser(datetime string, format string) DateTimeParser {
-	return DateTimeParser{
-		datetime: datetime
-		format: format
+@[inline]
+fn (p &DateTimeParser) matches_at(chars string) bool {
+	end := p.current_pos_datetime + chars.len
+	if end > p.datetime.len {
+		return false
 	}
+	for i in 0 .. chars.len {
+		if p.datetime[p.current_pos_datetime + i] != chars[i] {
+			return false
+		}
+	}
+	return true
 }
 
 fn (mut p DateTimeParser) next(length int) !string {
@@ -31,38 +38,61 @@ fn (mut p DateTimeParser) peek(length int) !string {
 }
 
 fn (mut p DateTimeParser) must_be_int(length int) !int {
-	val := p.next(length)!
-	if !val.contains_only('0123456789') {
-		return error('expected int, found: ${val}')
+	end := p.current_pos_datetime + length
+	if end > p.datetime.len {
+		return error('end of string')
 	}
-	return val.int()
+	mut val := 0
+	for i in p.current_pos_datetime .. end {
+		ch := p.datetime[i]
+		if ch < `0` || ch > `9` {
+			return error('expected int, found: ${p.datetime[p.current_pos_datetime..end]}')
+		}
+		val = val * 10 + int(ch - `0`)
+	}
+	p.current_pos_datetime = end
+	return val
 }
 
 fn (mut p DateTimeParser) must_be_int_with_minimum_length(min int, max int, allow_leading_zero bool) !int {
-	mut length := max + 1 - min
-	mut val := ''
-	for _ in 0 .. length {
-		tok := p.peek(1) or { break }
-		if !tok.contains_only('0123456789') {
+	max_len := max + 1 - min
+	start := p.current_pos_datetime
+	mut end := start
+	for _ in 0 .. max_len {
+		if end >= p.datetime.len {
 			break
 		}
-		p.next(1)!
-		val += tok
+		ch := p.datetime[end]
+		if ch < `0` || ch > `9` {
+			break
+		}
+		end++
 	}
-	if val.len < min {
-		return error('expected int with a minimum length of ${min}, found: ${val.len}')
+	if end - start < min {
+		return error('expected int with a minimum length of ${min}, found: ${end - start}')
 	}
-	if !allow_leading_zero && val.starts_with('0') {
+	if !allow_leading_zero && p.datetime[start] == `0` {
 		return error('0 is not allowed for this format')
 	}
-	return val.int()
+	mut val := 0
+	for i in start .. end {
+		val = val * 10 + int(p.datetime[i] - `0`)
+	}
+	p.current_pos_datetime = end
+	return val
 }
 
 fn (mut p DateTimeParser) must_be_string(must string) ! {
-	val := p.next(must.len)!
-	if val != must {
-		return error('invalid string: "${val}"!="${must}" at: ${p.current_pos_datetime}')
+	start := p.current_pos_datetime
+	end := p.current_pos_datetime + must.len
+	if end > p.datetime.len {
+		return error('end of string')
 	}
+	if !p.matches_at(must) {
+		p.current_pos_datetime = end
+		return error('invalid string: "${p.datetime[start..end]}"!="${must}" at: ${p.current_pos_datetime}')
+	}
+	p.current_pos_datetime = end
 }
 
 fn (mut p DateTimeParser) must_be_string_one_of(oneof []string) !string {
@@ -72,59 +102,81 @@ fn (mut p DateTimeParser) must_be_string_one_of(oneof []string) !string {
 			return must
 		}
 	}
-	return error('invalid string: must be one of ${oneof}, at ${p.current_pos_datetime}')
+	return error('invalid string: must be one of ${oneof}, at: ${p.current_pos_datetime}')
 }
 
 fn (mut p DateTimeParser) must_be_valid_month() !int {
 	for v in long_months {
-		if p.current_pos_datetime + v.len < p.datetime.len {
-			month_name := p.datetime[p.current_pos_datetime..p.current_pos_datetime + v.len]
-			if v == month_name {
-				p.current_pos_datetime += v.len
-				return long_months.index(month_name) + 1
-			}
+		if p.current_pos_datetime + v.len < p.datetime.len && p.matches_at(v) {
+			p.current_pos_datetime += v.len
+			return long_months.index(v) + 1
 		}
 	}
-	return error_invalid_time(0, 'invalid month name')
+	return error_invalid_time(0, 'invalid month name, at: ${p.current_pos_datetime}')
 }
 
 fn (mut p DateTimeParser) must_be_valid_three_letter_month() !int {
-	for month_number := 1; month_number < long_months.len; month_number++ {
-		if p.current_pos_datetime + 3 < p.datetime.len {
-			month_three_letters := p.datetime[p.current_pos_datetime..p.current_pos_datetime + 3]
-			if months_string[(month_number - 1) * 3..month_number * 3] == month_three_letters {
+	if p.current_pos_datetime + 3 < p.datetime.len {
+		for m := 1; m <= long_months.len; m++ {
+			token := months_string[(m - 1) * 3..m * 3]
+			if p.matches_at(token) {
 				p.current_pos_datetime += 3
-				return month_number
+				return m
 			}
 		}
 	}
-	return error_invalid_time(0, 'invalid month three letters')
+	return error_invalid_time(0, 'invalid three letter month, at: ${p.current_pos_datetime}')
 }
 
-fn (mut p DateTimeParser) must_be_valid_week_day(letters int) !string {
-	val := p.next(letters)!
+fn (mut p DateTimeParser) must_be_valid_week_day() !string {
 	for v in long_days {
-		if v[0..letters] == val {
+		if p.current_pos_datetime + v.len < p.datetime.len && p.matches_at(v) {
+			p.current_pos_datetime += v.len
 			return v
 		}
 	}
-	return error_invalid_time(0, 'invalid month name')
+	return error_invalid_time(0, 'invalid weekday, at: ${p.current_pos_datetime}')
+}
+
+fn (mut p DateTimeParser) must_be_valid_two_letter_week_day() !int {
+	if p.current_pos_datetime + 2 < p.datetime.len {
+		for d := 1; d <= long_days.len; d++ {
+			token := days_string[(d - 1) * 3..d * 3 - 1]
+			if p.matches_at(token) {
+				p.current_pos_datetime += 2
+				return d
+			}
+		}
+	}
+	return error_invalid_time(0, 'invalid two letter weekday, at: ${p.current_pos_datetime}')
+}
+
+fn (mut p DateTimeParser) must_be_valid_three_letter_week_day() !int {
+	if p.current_pos_datetime + 3 < p.datetime.len {
+		for d := 1; d <= long_days.len; d++ {
+			token := days_string[(d - 1) * 3..d * 3]
+			if p.matches_at(token) {
+				p.current_pos_datetime += 3
+				return d
+			}
+		}
+	}
+	return error_invalid_time(0, 'invalid three letter weekday, at: ${p.current_pos_datetime}')
 }
 
 fn extract_tokens(s string) ![]string {
 	mut tokens := []string{}
-	mut current := ''
-	for r in s {
-		if current.contains_only(r.ascii_str()) || current == '' {
-			current += r.ascii_str()
-		} else {
-			tokens << current
-			current = r.ascii_str()
+	if s.len == 0 {
+		return tokens
+	}
+	mut start := 0
+	for i := 1; i < s.len; i++ {
+		if s[i] != s[i - 1] {
+			tokens << s[start..i]
+			start = i
 		}
 	}
-	if current != '' {
-		tokens << current
-	}
+	tokens << s[start..s.len]
 	return tokens
 }
 
@@ -133,9 +185,15 @@ fn extract_tokens(s string) ![]string {
 // YY - 2 digit year, 00..99
 // M - month, 1..12
 // MM - month, 2 digits, 01..12
+// MMM - month, three letters, Jan..Dec
 // MMMM - name of month
 // D - day of the month, 1..31
 // DD - day of the month, 01..31
+// d - day of week, 0..6
+// c - day of week, 1..7
+// dd - day of week, Su..Sa
+// ddd - day of week, Sun..Sat
+// dddd - day of week, Sunday..Saturday
 // H - hour, 0..23
 // HH - hour, 00..23
 // h - hour, 0..23
@@ -160,7 +218,8 @@ fn (mut p DateTimeParser) parse() !Time {
 		match token {
 			'YYYY' {
 				year_ = p.must_be_int(4) or {
-					return error_invalid_time(0, 'end of string reached before the full year was specified')
+					return error_invalid_time(0,
+						'end of string reached before the full year was specified')
 				}
 			}
 			'YY' {
@@ -170,7 +229,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'M' {
 				month_ = p.must_be_int_with_minimum_length(1, 2, false) or {
-					return error_invalid_time(0, 'end of string reached before the month was specified')
+					return error_invalid_time(0,
+						'end of string reached before the month was specified')
 				}
 				if month_ < 1 || month_ > 12 {
 					return error_invalid_time(0, 'month must be  between 1 and 12')
@@ -178,7 +238,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'MM' {
 				month_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before the month was specified')
+					return error_invalid_time(0,
+						'end of string reached before the month was specified')
 				}
 				if month_ < 1 || month_ > 12 {
 					return error_invalid_time(0, 'month must be  between 01 and 12')
@@ -192,7 +253,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'D' {
 				day_in_month = p.must_be_int_with_minimum_length(1, 2, false) or {
-					return error_invalid_time(0, 'end of string reached before the day was specified')
+					return error_invalid_time(0,
+						'end of string reached before the day was specified')
 				}
 				if day_in_month < 1 || day_in_month > 31 {
 					return error_invalid_time(0, 'day must be  between 1 and 31')
@@ -200,15 +262,32 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'DD' {
 				day_in_month = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before the month was specified')
+					return error_invalid_time(0,
+						'end of string reached before the month was specified')
 				}
 				if day_in_month < 1 || day_in_month > 31 {
 					return error_invalid_time(0, 'day must be  between 01 and 31')
 				}
 			}
+			'd' {
+				p.must_be_int(1) or { return err }
+			}
+			'c' {
+				p.must_be_int(1) or { return err }
+			}
+			'dd' {
+				p.must_be_valid_two_letter_week_day() or { return err }
+			}
+			'ddd' {
+				p.must_be_valid_three_letter_week_day() or { return err }
+			}
+			'dddd' {
+				p.must_be_valid_week_day() or { return err }
+			}
 			'H' {
 				hour_ = p.must_be_int_with_minimum_length(1, 2, true) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 0 and 23')
@@ -216,7 +295,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'HH' {
 				hour_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 00 and 23')
@@ -224,7 +304,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'h' {
 				hour_ = p.must_be_int_with_minimum_length(1, 2, true) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 0 and 23')
@@ -232,7 +313,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'hh' {
 				hour_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 00 and 23')
@@ -240,7 +322,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'k' {
 				hour_ = p.must_be_int(1) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 0 and 23')
@@ -248,7 +331,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'kk' {
 				hour_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before hours where specified')
+					return error_invalid_time(0,
+						'end of string reached before hours where specified')
 				}
 				if hour_ < 0 || hour_ > 23 {
 					return error_invalid_time(0, 'hour must be  between 00 and 23')
@@ -256,7 +340,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'm' {
 				minute_ = p.must_be_int(1) or {
-					return error_invalid_time(0, 'end of string reached before minutes where specified')
+					return error_invalid_time(0,
+						'end of string reached before minutes where specified')
 				}
 				if minute_ < 0 || minute_ > 59 {
 					return error_invalid_time(0, 'minute must be between 0 and 59')
@@ -264,7 +349,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'mm' {
 				minute_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before minutes where specified')
+					return error_invalid_time(0,
+						'end of string reached before minutes where specified')
 				}
 				if minute_ < 0 || minute_ > 59 {
 					return error_invalid_time(0, 'minute must be between 00 and 59')
@@ -272,7 +358,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			's' {
 				second_ = p.must_be_int(1) or {
-					return error_invalid_time(0, 'end of string reached before seconds where specified')
+					return error_invalid_time(0,
+						'end of string reached before seconds where specified')
 				}
 				if second_ < 0 || second_ > 59 {
 					return error_invalid_time(0, 'second must be between 0 and 59')
@@ -280,7 +367,8 @@ fn (mut p DateTimeParser) parse() !Time {
 			}
 			'ss' {
 				second_ = p.must_be_int(2) or {
-					return error_invalid_time(0, 'end of string reached before seconds where specified')
+					return error_invalid_time(0,
+						'end of string reached before seconds where specified')
 				}
 				if second_ < 0 || second_ > 59 {
 					return error_invalid_time(0, 'second must be between 00 and 59')
@@ -304,11 +392,11 @@ fn (mut p DateTimeParser) parse() !Time {
 		return error_invalid_time(0, '${month_name} has only 30 days')
 	}
 
-	return new_time(
-		year: year_
-		month: month_
-		day: day_in_month
-		hour: hour_
+	return new(
+		year:   year_
+		month:  month_
+		day:    day_in_month
+		hour:   hour_
 		minute: minute_
 		second: second_
 	)

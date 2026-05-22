@@ -6,6 +6,10 @@ fn maybe() ?(int, int) {
 	return 1, 2
 }
 
+fn simple() ?int {
+	return 1
+}
+
 fn main() {
 	if r1 := create() {
 		println(r1)
@@ -19,6 +23,11 @@ fn main() {
 	}
 
 	if x := maybe() {
-		println('$x')
+		println('${x}')
+	}
+
+	if a, b := simple() {
+		println(a)
+		println(b)
 	}
 }

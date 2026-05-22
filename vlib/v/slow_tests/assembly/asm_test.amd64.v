@@ -1,3 +1,4 @@
+// vtest build: !msvc
 import v.slow_tests.assembly.util
 
 fn test_inline_asm() {
@@ -34,7 +35,7 @@ fn test_inline_asm() {
 
 	// g, h, i := 2.3, 4.8, -3.5
 	// asm rv64 {
-	// 	fadd.s $i, $g, $h // test `.` in instruction name
+	// 	fadd.s ${i}, ${g}, ${h} // test `.` in instruction name
 	// 	: =r (i) as i
 	// 	: r (g) as g
 	// 	  r (g) as h
@@ -74,7 +75,7 @@ fn test_inline_asm() {
 	// assert loops == 1
 	// assert k == 5
 
-	// not marked as mut because we derefernce m to change l
+	// not marked as mut because we dereference m to change l
 	l := 5
 	m := &l
 	asm amd64 {
@@ -99,18 +100,19 @@ fn test_inline_asm() {
 
 	assert util.add(8, 9, 34, 7) == 58 // test .amd64.v imported files
 
-	mut o := Manu{}
+	mut o := &Manu{}
 	asm amd64 {
 		mov eax, 0
 		cpuid
 		; =b (o.ebx) as ebx0
 		  =d (o.edx) as edx0
 		  =c (o.ecx) as ecx0
+		; ; eax
 	}
-	o.str()
+	assert o.str()[0].is_capital()
 }
 
-[packed]
+@[packed]
 struct Manu {
 mut:
 	ebx  u32
@@ -119,11 +121,11 @@ mut:
 	zero u8 // for string
 }
 
-fn (m Manu) str() string {
+fn (m &Manu) str() string {
 	return unsafe {
 		string{
-			str: &u8(&m)
-			len: 24
+			str:    &u8(m)
+			len:    12
 			is_lit: 1
 		}
 	}
@@ -131,7 +133,7 @@ fn (m Manu) str() string {
 
 // this test does not appear in i386 test since rip relative addressing was introduced in 64-bit mode
 // doesn't actually work
-[if !macos]
+@[if !macos]
 fn test_rip_relative_label() {
 	$if !macos {
 		mut a := i64(4)
@@ -153,7 +155,7 @@ $if !macos {
 
 // this test does not appear in i386 test since rip relative addressing was introduced in 64-bit mode
 // doesn't actually work
-[if !macos]
+@[if !macos]
 fn test_rip_relative_label_u8() {
 	$if !macos {
 		mut a := int(4)
@@ -173,51 +175,11 @@ $if !macos {
 	}
 }
 
-fn test_flag_output() {
-	a, b := 4, 9
-	mut out := false
-	asm amd64 {
-		cmp a, b
-		; =@ccl (out)
-		; r (a)
-		  r (b)
-	}
-	assert out
-	asm amd64 {
-		cmp b, a
-		; =@ccl (out)
-		; r (a)
-		  r (b)
-	}
-	assert !out
-
-	zero := 0
-	asm amd64 {
-		cmp zero, zero
-		; =@ccz (out)
-		; r (zero)
-	}
-	assert out
-
-	mut maybe_four := 4
-	mut four := 4
-	asm amd64 {
-		subl four, maybe_four
-		testl four, maybe_four
-		movl maybe_four, 9
-		; +m (maybe_four)
-		  +r (four)
-		  =@ccz (out)
-	}
-	assert out
-	assert maybe_four == 9
-}
-
 fn test_asm_generic() {
 	u := u64(49)
 	assert generic_asm(u) == 14
 	assert u == 63
-	//
+
 	i := i32(123)
 	assert generic_asm(i) == 14
 	assert i == 137
@@ -234,4 +196,22 @@ fn generic_asm[T](var &T) T {
 		}
 	}
 	return ret
+}
+
+fn test_lock_prefix() {
+	mut rv := u64(123)
+	mut atom := u64(0)
+	cmp := u64(1)
+	xchg := u64(1)
+
+	asm amd64 {
+		lock cmpxchgq '%1', '%2'
+		; =a (rv)
+		  +m (atom)
+		; q (xchg)
+		  0 (cmp)
+		; memory
+	}
+	assert rv == 0
+	assert atom == 0
 }

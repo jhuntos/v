@@ -1,21 +1,24 @@
 module gg
 
-import gx
 import sokol.sgl
 
 // Stuff for ui from now for screenshot (that would be interesting for gg if screenshot is implemented also for gg)
 
 // required for ui.DrawDevice interface (with &gg.Context as an instance)
 pub fn (ctx &Context) scissor_rect(x int, y int, w int, h int) {
-	sgl.scissor_rect(int(ctx.scale * x), int(ctx.scale * y), int(ctx.scale * w), int(ctx.scale * h),
-		true)
+	sgl.scissor_rect(int(ctx.scale * x), int(ctx.scale * y), int(ctx.scale * w),
+		int(ctx.scale * h), true)
 }
 
+// empty function
 pub fn (ctx &Context) has_text_style() bool {
 	return false
 }
 
-pub fn (ctx &Context) set_text_style(font_name string, font_path string, size int, color gx.Color, align int, vertical_align int) {}
+// empty function
+pub fn (ctx &Context) set_text_style(font_name string, font_path string, size int, color Color, align int,
+	vertical_align int) {
+}
 
 // default draw_text (draw_text_def but without set_text_cfg)
 pub fn (ctx &Context) draw_text_default(x int, y int, text string) {

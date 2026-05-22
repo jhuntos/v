@@ -1,6 +1,30 @@
 module os
 
-fn C.setpgid(pid int, pgid int) int
+fn C.setpgid(pid i32, pgid i32) i32
+
+fn env_value_from_entries(env []string, name string) ?string {
+	prefix := '${name}='
+	for entry in env {
+		if entry.starts_with(prefix) {
+			return entry[prefix.len..]
+		}
+	}
+	return none
+}
+
+fn (p &Process) unix_resolve_filename() !string {
+	if is_abs_path(p.filename) {
+		return p.filename
+	}
+	if p.filename.contains(path_separator) {
+		if p.work_folder != '' {
+			return abs_path(p.filename)
+		}
+		return p.filename
+	}
+	path := env_value_from_entries(p.env, 'PATH') or { return error_failed_to_find_executable() }
+	return find_abs_path_of_executable_in_path_env(p.filename, path)
+}
 
 fn (mut p Process) unix_spawn_process() int {
 	mut pipeset := [6]int{}
@@ -35,7 +59,7 @@ fn (mut p Process) unix_spawn_process() int {
 		C.setpgid(0, 0)
 	}
 	if p.use_stdio_ctl {
-		// Redirect the child standart in/out/err to the pipes that
+		// Redirect the child standard in/out/err to the pipes that
 		// were created in the parent.
 		// Close the parent's pipe fds, the child do not need them:
 		fd_close(pipeset[1])
@@ -50,13 +74,11 @@ fn (mut p Process) unix_spawn_process() int {
 		fd_close(pipeset[3])
 		fd_close(pipeset[5])
 	}
+	p.filename = p.unix_resolve_filename() or {
+		eprintln(err)
+		exit(1)
+	}
 	if p.work_folder != '' {
-		if !is_abs_path(p.filename) {
-			// Ensure p.filename contains an absolute path, so it
-			// can be located reliably, even after changing the
-			// current folder in the child process:
-			p.filename = abs_path(p.filename)
-		}
 		chdir(p.work_folder) or {}
 	}
 	execve(p.filename, p.args, p.env) or {
@@ -74,6 +96,10 @@ fn (mut p Process) unix_resume_process() {
 	C.kill(p.pid, C.SIGCONT)
 }
 
+fn (mut p Process) unix_term_process() {
+	C.kill(p.pid, C.SIGTERM)
+}
+
 fn (mut p Process) unix_kill_process() {
 	C.kill(p.pid, C.SIGKILL)
 }
@@ -83,42 +109,32 @@ fn (mut p Process) unix_kill_pgroup() {
 }
 
 fn (mut p Process) unix_wait() {
-	cstatus := 0
-	mut ret := -1
-	$if !emscripten ? {
-		ret = C.waitpid(p.pid, &cstatus, 0)
-	}
-	if ret == -1 {
-		p.err = posix_get_error_msg(C.errno)
-		return
-	}
-	pret, is_signaled := posix_wait4_to_exit_status(cstatus)
-	if is_signaled {
-		p.status = .aborted
-		p.err = 'Terminated by signal ${ret:2d} (${sigint_to_signal_name(pret)})'
-	} else {
-		p.status = .exited
-	}
-	p.code = pret
+	p.impl_check_pid_status(false, 0)
 }
 
 fn (mut p Process) unix_is_alive() bool {
-	cstatus := 0
+	return p.impl_check_pid_status(true, C.WNOHANG)
+}
+
+fn (mut p Process) impl_check_pid_status(exit_early_on_ret0 bool, waitpid_options int) bool {
+	mut cstatus := 0
 	mut ret := -1
 	$if !emscripten ? {
-		ret = C.waitpid(p.pid, &cstatus, C.WNOHANG)
+		ret = C.waitpid(p.pid, &cstatus, waitpid_options)
 	}
+	p.code = ret
 	if ret == -1 {
 		p.err = posix_get_error_msg(C.errno)
 		return false
 	}
-	if ret == 0 {
+	if exit_early_on_ret0 && ret == 0 {
 		return true
 	}
-	pret, is_signaled := posix_wait4_to_exit_status(cstatus)
+	mut pret, is_signaled := posix_wait4_to_exit_status(cstatus)
 	if is_signaled {
 		p.status = .aborted
-		p.err = 'Terminated by signal ${ret:2d} (${sigint_to_signal_name(pret)})'
+		p.err = 'Terminated by signal ${pret:2d} (${sigint_to_signal_name(pret)})'
+		pret += 128
 	} else {
 		p.status = .exited
 	}
@@ -137,6 +153,9 @@ fn (mut p Process) win_stop_process() {
 fn (mut p Process) win_resume_process() {
 }
 
+fn (mut p Process) win_term_process() {
+}
+
 fn (mut p Process) win_kill_process() {
 }
 
@@ -150,13 +169,17 @@ fn (mut p Process) win_is_alive() bool {
 	return false
 }
 
-fn (mut p Process) win_write_string(idx int, s string) {
+fn (mut p Process) win_write_string(_idx int, _s string) {
 }
 
-fn (mut p Process) win_read_string(idx int, maxbytes int) (string, int) {
+fn (mut p Process) win_read_string(_idx int, _maxbytes int) (string, int) {
 	return '', 0
 }
 
-fn (mut p Process) win_slurp(idx int) string {
+fn (mut p Process) win_is_pending(_idx int) bool {
+	return false
+}
+
+fn (mut p Process) win_slurp(_idx int) string {
 	return ''
 }

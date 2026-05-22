@@ -5,18 +5,18 @@ module os
 #include <android/native_activity.h>
 
 pub enum AssetMode {
-	buffer = C.AASSET_MODE_BUFFER // Caller plans to ask for a read-only buffer with all data.
-	random = C.AASSET_MODE_RANDOM // Read chunks, and seek forward and backward.
+	buffer    = C.AASSET_MODE_BUFFER    // Caller plans to ask for a read-only buffer with all data.
+	random    = C.AASSET_MODE_RANDOM    // Read chunks, and seek forward and backward.
 	streaming = C.AASSET_MODE_STREAMING // Read sequentially, with an occasional forward seek.
-	unknown = C.AASSET_MODE_UNKNOWN // No specific information about how data will be accessed.
+	unknown   = C.AASSET_MODE_UNKNOWN   // No specific information about how data will be accessed.
 }
 
 // See https://developer.android.com/ndk/reference/struct/a-native-activity for more info.
-struct C.ANativeActivity {
+pub struct C.ANativeActivity {
 pub:
 	assetManager     &AssetManager = unsafe { nil } // Pointer to the Asset Manager instance for the application.
-	clazz            voidptr       // (jobject) The NativeActivity object handle.
-	env              voidptr       // (JNIEnv *) JNI context for the main thread of the app.
+	clazz            voidptr // (jobject) The NativeActivity object handle.
+	env              voidptr // (JNIEnv *) JNI context for the main thread of the app.
 	externalDataPath &char   // Path to this application's external (removable/mountable) data directory.
 	instance         voidptr // This is the native instance of the application.
 	internalDataPath &char   // Path to this application's internal data directory.
@@ -28,15 +28,15 @@ pub:
 // NativeActivity defines the native side of an android.app.NativeActivity.
 pub type NativeActivity = C.ANativeActivity
 
-struct C.AAssetManager {
+pub struct C.AAssetManager {
 }
 
 // AssetManager provides access to an application's raw assets by creating Asset objects.
 pub type AssetManager = C.AAssetManager
 
-fn C.AAssetManager_open(&C.AAssetManager, &char, int) &C.AAsset
+fn C.AAssetManager_open(&C.AAssetManager, &char, i32) &C.AAsset
 
-// open opens an Android `Asset`
+// open opens an Android `Asset`.
 pub fn (am &AssetManager) open(filename string, mode AssetMode) !&Asset {
 	asset := C.AAssetManager_open(am, filename.str, int(mode))
 	if isnil(asset) {
@@ -45,7 +45,7 @@ pub fn (am &AssetManager) open(filename string, mode AssetMode) !&Asset {
 	return asset
 }
 
-struct C.AAsset {
+pub struct C.AAsset {
 }
 
 pub type Asset = C.AAsset
@@ -57,7 +57,7 @@ pub fn (a &Asset) get_buffer() voidptr {
 	return C.AAsset_getBuffer(a)
 }
 
-fn C.AAsset_getLength(&C.AAsset) int
+fn C.AAsset_getLength(&C.AAsset) i32
 
 // get_length returns the total size of the asset data.
 pub fn (a &Asset) get_length() int {
@@ -66,13 +66,12 @@ pub fn (a &Asset) get_length() int {
 
 fn C.AAsset_getLength64(&C.AAsset) i64
 
-// get_length_64 returns the total size of the asset data using
-// a 64-bit number insted of 32-bit as `get_length`.
+// get_length_64 returns the total size of the asset data using a 64-bit number instead of 32-bit as `get_length`.
 pub fn (a &Asset) get_length_64() i64 {
 	return C.AAsset_getLength64(a)
 }
 
-fn C.AAsset_read(&C.AAsset, voidptr, usize) int
+fn C.AAsset_read(&C.AAsset, voidptr, usize) i32
 
 // read attempts to read 'count' bytes of data from the current offset.
 // read returns the number of bytes read, zero on EOF, or < 0 on error.

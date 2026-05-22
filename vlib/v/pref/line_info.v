@@ -1,72 +1,70 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license that can be found in the LICENSE file.
 module pref
 
-// import v.ast
-// import v.pref
-// import os
-
-// fn (mut p Pref) parse_line_info(line string, all_ast_files []&ast.File) {
-fn (mut p Preferences) parse_line_info(line string) {
-	// println("parse_line_info '${line}'")
-	format_err := 'wrong format, use `-line-info "file.v:24:expr_to_look_up"'
-	vals := line.split(':')
-	if vals.len != 3 {
-		eprintln(format_err)
-		return
-	}
-	file_name := vals[0]
-	line_nr := vals[1].int() - 1
-	expr := vals[2]
-	if !file_name.ends_with('.v') || line_nr == -1 {
-		eprintln(format_err)
-		return
-	}
-
-	// println('files.len=${c.files.len}')
-	// Find which file contains the line
-	mut found := true // false
-	//// mut found_path := ''
-	// mut found_file_idx := -1
-	/*
-	for i, file in all_ast_files {
-		// base := os.base(file.path)
-		base := file.path // os.base(file.path)
-		// println(base)
-		if base == file_name {
-			if found {
-				eprintln('more than one "${file_name}" found: "${file.path}" and "${found_path}"')
-				return
-			}
-			found = true
-			found_path = file.path
-			found_file_idx = i
-		}
-	}
-	*/
-
-	if !found {
-		eprintln('file "${file_name}" not found among those parsed')
-		return
-	}
-
-	p.linfo = LineInfo{
-		line_nr: line_nr
-		path: file_name
-		expr: expr
-	}
+// Method copy from vls/lsp.v
+pub enum Method {
+	unknown         @['unknown']
+	initialize      @['initialize']
+	initialized     @['initialized']
+	did_open        @['textDocument/didOpen']
+	did_change      @['textDocument/didChange']
+	definition      @['textDocument/definition']
+	completion      @['textDocument/completion']
+	signature_help  @['textDocument/signatureHelp']
+	hover           @['textDocument/hover']
+	set_trace       @['$/setTrace']
+	cancel_request  @['$/cancelRequest']
+	shutdown        @['shutdown']
+	exit            @['exit']
 }
 
-pub fn add_line_info_expr_to_program_text(raw_text string, linfo LineInfo) string {
-	lines := raw_text.split('\n')
-	lines_before := lines[..linfo.line_nr].join('\n')
-	mut expr := linfo.expr
-	if !expr.contains('.') {
-		// Single variable, `foo` => `foo.xx`
-		// expr += '.xxx'
-		// expr = '_ = ' + expr
-		expr = 'println(' + expr + ')'
+pub struct LineInfo {
+pub mut:
+	method       Method
+	path         string // same, but stores the path being parsed
+	line_nr      int    // a quick single file run when called with v -line-info (contains line nr to inspect)
+	col          int
+	vars_printed map[string]bool // to avoid dups
+}
+
+fn (mut p Preferences) parse_line_info(line string) {
+	format_err := 'wrong format, use `-line-info "file.v:24:7"'
+	vals := line.split(':')
+	if vals.len < 3 {
+		eprintln(format_err)
+		return
 	}
-	lines_after := lines[linfo.line_nr..].join('\n')
-	return lines_before + '\n' + expr + '\n' + lines_after
+	file_name := vals[..vals.len - 2].join(':')
+	line_nr := vals[vals.len - 2].int()
+
+	if (!file_name.ends_with('.v') && !file_name.ends_with('.vv')) || line_nr == -1 {
+		eprintln(format_err)
+		return
+	}
+
+	// Third value is column
+	third := vals[vals.len - 1]
+	mut col := 0
+	method := if third.starts_with('fn^') {
+		col = third[3..].int() - 1
+		Method.signature_help
+	} else if third.starts_with('gd^') {
+		col = third[3..].int() - 1
+		Method.definition
+	} else if third.starts_with('hv^') {
+		col = third[3..].int() - 1
+		Method.hover
+	} else if third[0].is_digit() {
+		col = third.int() - 1
+		Method.completion
+	} else {
+		Method.unknown
+	}
+	p.linfo = LineInfo{
+		method:  method
+		line_nr: line_nr - 1
+		path:    file_name
+		col:     col
+	}
 }

@@ -102,6 +102,7 @@ fn (mut mod Module) patch(ft Function) {
 				idx = mod.global_imports.len + patch.idx
 			}
 		}
+
 		mod.buf << ft.code[ptr..patch.pos]
 		mod.u32(u32(idx))
 		ptr = patch.pos
@@ -314,7 +315,7 @@ pub fn (mut mod Module) compile() []u8 {
 					mod.buf << 0x00 // active
 					// constant expr
 					mod.buf << 0x41 // i32.const
-					mod.buf << leb128.encode_i32(idx)
+					mod.buf << leb128.encode_i32(i32(idx))
 					mod.buf << 0x0B // END expression opcode
 				} else {
 					mod.buf << 0x01 // passive

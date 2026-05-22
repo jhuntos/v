@@ -15,28 +15,9 @@ pub fn (prefs &Preferences) should_compile_filtered_files(dir string, files_ []s
 			|| file.all_before_last('.v').all_before_last('.').ends_with('_test') {
 			continue
 		}
-		if prefs.backend in [.c, .interpret] && !prefs.should_compile_c(file) {
-			continue
-		}
-		if prefs.backend.is_js() && !prefs.should_compile_js(file) {
-			continue
-		}
-		if prefs.backend == .native && !prefs.should_compile_native(file) {
-			continue
-		}
-		if !prefs.backend.is_js() && !prefs.should_compile_asm(file) {
-			continue
-		}
-		if file.starts_with('.#') {
-			continue
-		}
-		if !prefs.prealloc && !prefs.output_cross_c && file.ends_with('prealloc.c.v') {
-			continue
-		}
-		if prefs.nofloat && file.ends_with('float.c.v') {
-			continue
-		}
+		mut is_d_notd_file := false
 		if file.contains('_d_') {
+			is_d_notd_file = true
 			if prefs.compile_defines_all.len == 0 {
 				continue
 			}
@@ -58,6 +39,7 @@ pub fn (prefs &Preferences) should_compile_filtered_files(dir string, files_ []s
 			}
 		}
 		if file.contains('_notd_') {
+			is_d_notd_file = true
 			mut allowed := true
 			for cdefine in prefs.compile_defines {
 				file_postfixes := ['_notd_${cdefine}.v', '_notd_${cdefine}.c.v']
@@ -75,6 +57,27 @@ pub fn (prefs &Preferences) should_compile_filtered_files(dir string, files_ []s
 				continue
 			}
 		}
+		if prefs.backend in [.c, .interpret] && !is_d_notd_file && !prefs.should_compile_c(file) {
+			continue
+		}
+		if prefs.backend.is_js() && !prefs.should_compile_js(file) {
+			continue
+		}
+		if !prefs.backend.is_js() && !prefs.should_compile_asm(file) {
+			continue
+		}
+		if prefs.backend == .wasm && !prefs.should_compile_wasm(file) {
+			continue
+		}
+		if file.starts_with('.#') {
+			continue
+		}
+		if !prefs.prealloc && !prefs.output_cross_c && file.ends_with('prealloc.c.v') {
+			continue
+		}
+		if prefs.nofloat && file.ends_with('float.c.v') {
+			continue
+		}
 		if prefs.exclude.len > 0 {
 			full_file_path := os.join_path(dir, file)
 			for epattern in prefs.exclude {
@@ -85,7 +88,7 @@ pub fn (prefs &Preferences) should_compile_filtered_files(dir string, files_ []s
 		}
 		all_v_files << os.join_path(dir, file)
 	}
-	//
+
 	mut defaults := []string{}
 	mut fnames_no_postfixes := map[string][]string{}
 	for file in all_v_files {
@@ -109,58 +112,142 @@ pub fn (prefs &Preferences) should_compile_filtered_files(dir string, files_ []s
 		}
 		res << file
 	}
+	res = prefs.filter_bsd_specific_files(res)
 	if prefs.is_verbose {
-		// println('>>> prefs: $prefs')
+		// println('>>> prefs: ${prefs}')
 		println('>>> should_compile_filtered_files: res: ${res}')
 	}
 	return res
 }
 
+const platform_specific_postfixes = [
+	'_android_outside_termux.c.v',
+	'_wasm32_emscripten.c.v',
+	'_wasm32_emscripten.v',
+	'_dragonfly.c.v',
+	'_dragonfly.v',
+	'_windows.c.v',
+	'_windows.v',
+	'_freebsd.c.v',
+	'_freebsd.v',
+	'_openbsd.c.v',
+	'_openbsd.v',
+	'_netbsd.c.v',
+	'_netbsd.v',
+	'_solaris.c.v',
+	'_serenity.c.v',
+	'_android.c.v',
+	'_termux.c.v',
+	'_darwin.c.v',
+	'_darwin.v',
+	'_macos.c.v',
+	'_macos.v',
+	'_linux.c.v',
+	'_linux.v',
+	'_default.c.v',
+	'_bsd.c.v',
+	'_bsd.v',
+	'_nix.c.v',
+	'_nix.v',
+	'_ios.c.v',
+	'_ios.v',
+	'_qnx.c.v',
+	'_plan9.c.v',
+	'_vinix.c.v',
+	'_haiku.c.v',
+]
+
 fn fname_without_platform_postfix(file string) string {
-	res := file.replace_each([
-		'default.c.v',
-		'_',
-		'nix.c.v',
-		'_',
-		'windows.c.v',
-		'_',
-		'linux.c.v',
-		'_',
-		'darwin.c.v',
-		'_',
-		'macos.c.v',
-		'_',
-		'android.c.v',
-		'_',
-		'termux.c.v',
-		'_',
-		'android_outside_termux.c.v',
-		'_',
-		'freebsd.c.v',
-		'_',
-		'openbsd.c.v',
-		'_',
-		'netbsd.c.v',
-		'_',
-		'dragonfly.c.v',
-		'_',
-		'solaris.c.v',
-		'_',
-		'native.v',
-		'_',
-	])
+	for postfix in platform_specific_postfixes {
+		if file.ends_with(postfix) {
+			return file[..file.len - postfix.len]
+		}
+	}
+	return file
+}
+
+struct BsdSpecificFiles {
+mut:
+	has_bsd   bool
+	has_exact bool
+}
+
+fn (prefs &Preferences) filter_bsd_specific_files(files []string) []string {
+	if !prefs.os.is_bsd_target() {
+		return files
+	}
+	mut variants := map[string]BsdSpecificFiles{}
+	for file in files {
+		kind := prefs.bsd_specific_file_kind(file)
+		if kind == '' {
+			continue
+		}
+		key := fname_without_platform_postfix(file)
+		mut info := variants[key]
+		if kind == 'bsd' {
+			info.has_bsd = true
+		}
+		if kind == 'exact' {
+			info.has_exact = true
+		}
+		variants[key] = info
+	}
+	mut res := []string{}
+	for file in files {
+		kind := prefs.bsd_specific_file_kind(file)
+		if kind == '' {
+			res << file
+			continue
+		}
+		info := variants[fname_without_platform_postfix(file)]
+		if kind == 'nix' && info.has_bsd {
+			if prefs.is_verbose {
+				println('>>> should_compile_filtered_files: skipping _nix file ${file} ; _bsd is more specific')
+			}
+			continue
+		}
+		if kind == 'bsd' && info.has_exact {
+			if prefs.is_verbose {
+				println('>>> should_compile_filtered_files: skipping _bsd file ${file} ; exact BSD target is more specific')
+			}
+			continue
+		}
+		res << file
+	}
 	return res
 }
 
-pub fn (prefs &Preferences) should_compile_native(file string) bool {
-	// allow custom filtering for native backends,
-	// but if there are no other rules, default to the c backend rules
-	return prefs.should_compile_c(file)
+fn (prefs &Preferences) bsd_specific_file_kind(file string) string {
+	if file.ends_with('_nix.c.v') || file.ends_with('_nix.v') {
+		return 'nix'
+	}
+	if file.ends_with('_bsd.c.v') || file.ends_with('_bsd.v') {
+		return 'bsd'
+	}
+	if prefs.os == .macos && (file.ends_with('_darwin.c.v') || file.ends_with('_darwin.v')
+		|| file.ends_with('_macos.c.v') || file.ends_with('_macos.v')) {
+		return 'exact'
+	}
+	if prefs.os == .freebsd && (file.ends_with('_freebsd.c.v') || file.ends_with('_freebsd.v')) {
+		return 'exact'
+	}
+	if prefs.os == .openbsd && (file.ends_with('_openbsd.c.v') || file.ends_with('_openbsd.v')) {
+		return 'exact'
+	}
+	if prefs.os == .netbsd && (file.ends_with('_netbsd.c.v') || file.ends_with('_netbsd.v')) {
+		return 'exact'
+	}
+	if prefs.os == .dragonfly
+		&& (file.ends_with('_dragonfly.c.v') || file.ends_with('_dragonfly.v')) {
+		return 'exact'
+	}
+	return ''
 }
 
+// TODO: Rework this using is_target_of()
 pub fn (prefs &Preferences) should_compile_c(file string) bool {
-	if file.ends_with('.js.v') {
-		// Probably something like `a.js.v`.
+	if file.ends_with('.js.v') || file.ends_with('.wasm.v') {
+		// Probably something like `a.js.v` or `a.wasm.v`.
 		return false
 	}
 	if prefs.is_bare && file.ends_with('.freestanding.v') {
@@ -169,11 +256,11 @@ pub fn (prefs &Preferences) should_compile_c(file string) bool {
 	if prefs.os == .all {
 		return true
 	}
-	if prefs.backend != .native && file.ends_with('_native.v') {
+	if file.ends_with('_native.v') {
 		return false
 	}
 	if prefs.building_v && prefs.output_cross_c && file.ends_with('_windows.v') {
-		// TODO temp hack to make msvc_windows.v work with -os cross
+		// TODO: temp hack to make msvc_windows.v work with -os cross
 		return true
 	}
 	if prefs.os == .windows && (file.ends_with('_nix.c.v') || file.ends_with('_nix.v')) {
@@ -182,31 +269,35 @@ pub fn (prefs &Preferences) should_compile_c(file string) bool {
 	if prefs.os != .windows && (file.ends_with('_windows.c.v') || file.ends_with('_windows.v')) {
 		return false
 	}
-	//
+
 	if prefs.os != .linux && (file.ends_with('_linux.c.v') || file.ends_with('_linux.v')) {
 		return false
 	}
-	//
+
 	if prefs.os != .macos && (file.ends_with('_darwin.c.v') || file.ends_with('_darwin.v')) {
 		return false
 	}
 	if prefs.os != .macos && (file.ends_with('_macos.c.v') || file.ends_with('_macos.v')) {
 		return false
 	}
-	//
+
 	if prefs.os != .ios && (file.ends_with('_ios.c.v') || file.ends_with('_ios.v')) {
 		return false
 	}
-	if prefs.os != .freebsd && file.ends_with('_freebsd.c.v') {
+	if !prefs.os.is_bsd_target() && (file.ends_with('_bsd.c.v') || file.ends_with('_bsd.v')) {
 		return false
 	}
-	if prefs.os != .openbsd && file.ends_with('_openbsd.c.v') {
+	if prefs.os != .freebsd && (file.ends_with('_freebsd.c.v') || file.ends_with('_freebsd.v')) {
 		return false
 	}
-	if prefs.os != .netbsd && file.ends_with('_netbsd.c.v') {
+	if prefs.os != .openbsd && (file.ends_with('_openbsd.c.v') || file.ends_with('_openbsd.v')) {
 		return false
 	}
-	if prefs.os != .dragonfly && file.ends_with('_dragonfly.c.v') {
+	if prefs.os != .netbsd && (file.ends_with('_netbsd.c.v') || file.ends_with('_netbsd.v')) {
+		return false
+	}
+	if prefs.os != .dragonfly
+		&& (file.ends_with('_dragonfly.c.v') || file.ends_with('_dragonfly.v')) {
 		return false
 	}
 	if prefs.os != .solaris && file.ends_with('_solaris.c.v') {
@@ -216,6 +307,9 @@ pub fn (prefs &Preferences) should_compile_c(file string) bool {
 		return false
 	}
 	if prefs.os != .serenity && file.ends_with('_serenity.c.v') {
+		return false
+	}
+	if prefs.os != .plan9 && file.ends_with('_plan9.c.v') {
 		return false
 	}
 	if prefs.os != .vinix && file.ends_with('_vinix.c.v') {
@@ -228,21 +322,25 @@ pub fn (prefs &Preferences) should_compile_c(file string) bool {
 		// where the Android SDK is not used.
 		if file.ends_with('_android.c.v') {
 			// common case, should compile for both cross android and termux
-			// eprintln('prefs.os: $prefs.os | file: $file | common')
+			// eprintln('prefs.os: ${prefs.os} | file: ${file} | common')
 			return true
 		}
 		if file.ends_with('_android_outside_termux.c.v') {
 			// compile code that targets Android, but NOT Termux (i.e. the SDK is available)
-			// eprintln('prefs.os: $prefs.os | file: $file | android_outside_termux')
+			// eprintln('prefs.os: ${prefs.os} | file: ${file} | android_outside_termux')
 			return prefs.os == .android
 		}
 		if file.ends_with('_termux.c.v') {
 			// compile Termux specific code
-			// eprintln('prefs.os: $prefs.os | file: $file | termux specific')
+			// eprintln('prefs.os: ${prefs.os} | file: ${file} | termux specific')
 			return prefs.os == .termux
 		}
 	} else if file.ends_with('_android.c.v') || file.ends_with('_termux.c.v')
 		|| file.ends_with('_android_outside_termux.c.v') {
+		return false
+	}
+	if prefs.os != .wasm32_emscripten
+		&& (file.ends_with('_wasm32_emscripten.c.v') || file.ends_with('_wasm32_emscripten.v')) {
 		return false
 	}
 	return true
@@ -272,4 +370,49 @@ pub fn (prefs &Preferences) should_compile_js(file string) bool {
 		return false
 	}
 	return true
+}
+
+pub fn (prefs &Preferences) should_compile_wasm(file string) bool {
+	if !file.ends_with('.wasm.v') && file.count('.') >= 2 {
+		// not .wasm.v not just .v something else like .c.v
+		return false
+	}
+	return true
+}
+
+// is_target_of returns true if this_os is included in the target specified
+// for example, 'nix' is true for Linux and FreeBSD but not Windows
+pub fn (this_os OS) is_target_of(target string) bool {
+	if this_os == .all {
+		return true
+	}
+	// Note: Termux is running natively on Android devices, but the compilers there (clang) usually do not have access
+	// to the Android SDK. The code here ensures that you can have `_termux.c.v` and `_android_outside_termux.c.v` postfixes,
+	// to target both the cross compilation case (where the SDK headers are used and available), and the Termux case,
+	// where the Android SDK is not used.
+	// 'nix' means "all but Windows"
+	if (this_os == .windows && target == 'nix')
+		|| (this_os != .windows && target == 'windows')
+		|| (this_os != .linux && target == 'linux')
+		|| (this_os != .macos && target in ['darwin', 'macos', 'mac'])
+		|| (!this_os.is_bsd_target() && target == 'bsd')
+		|| (this_os != .ios && target == 'ios')
+		|| (this_os != .freebsd && target == 'freebsd')
+		|| (this_os != .openbsd && target == 'openbsd')
+		|| (this_os != .netbsd && target == 'netbsd')
+		|| (this_os != .dragonfly && target == 'dragonfly')
+		|| (this_os != .solaris && target == 'solaris')
+		|| (this_os != .qnx && target == 'qnx')
+		|| (this_os != .serenity && target == 'serenity')
+		|| (this_os != .plan9 && target == 'plan9')
+		|| (this_os != .vinix && target == 'vinix')
+		|| (this_os != .android && target in ['android', 'android_outside_termux'])
+		|| (this_os != .termux && target == 'termux') {
+		return false
+	}
+	return true
+}
+
+fn (this_os OS) is_bsd_target() bool {
+	return this_os in [.macos, .freebsd, .openbsd, .netbsd, .dragonfly]
 }

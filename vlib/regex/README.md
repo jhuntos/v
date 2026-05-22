@@ -39,9 +39,6 @@ The main differences can be summarized in the following points:
 - The **match operation stops at the end of the string**. It does *NOT* stop
   at new line characters.
 
-- The **match operation stops at the end of the string**. It does *NOT* stop
-  at new line characters.
-
 ## Tokens
 
 The tokens are the atomic units, used by this regex engine.
@@ -70,7 +67,7 @@ but it doesn't match `C` or `z`.
 Inside a cc, it is possible to specify a "range" of characters, for example
 `[ad-h]` is equivalent to writing `[adefgh]`.
 
-A cc can have different ranges at the same time, for example `[a-zA-z0-9]`
+A cc can have different ranges at the same time, for example `[a-zA-Z0-9]`
 matches all the latin lowercase, uppercase and numeric characters.
 
 It is possible to negate the meaning of a cc, using the caret char at the
@@ -97,7 +94,7 @@ For example `\w` is the meta-char `w`.
 
 A meta-char can match different types of characters.
 
-- `\w` matches a word char char `[a-zA-Z0-9_]`
+- `\w` matches a word char `[a-zA-Z0-9_]`
 - `\W` matches a non word char
 - `\d` matches a digit `[0-9]`
 - `\D` matches a non digit
@@ -105,6 +102,9 @@ A meta-char can match different types of characters.
 - `\S` matches a non space char
 - `\a` matches only a lowercase char `[a-z]`
 - `\A` matches only an uppercase char `[A-Z]`
+
+- `\x41`   match a byte of value 0x41, `A` in ascii code
+- `\X414C` match two consecutive bytes of value 0x414c, `AL` in ascii code
 
 ### Quantifier
 
@@ -137,7 +137,7 @@ The dot is a particular meta-char, that matches "any char".
 It is simpler to explain it with an example:
 
 Suppose you have `abccc ddeef` as a source string, that you want to parse
-with a regex. The following table show the query strings and the result of
+with a regex. The following table shows the query strings and the result of
 parsing source string.
 
 | query string | result      |
@@ -183,7 +183,7 @@ nested. Like all other tokens, groups can have a quantifier too.
 `(c(pa)+z ?)+` matches `cpaz cpapaz cpapapaz` or `cpapaz`
 
 Lets analyze this last case, first we have the group `#0`, that is the most
-outer round brackets `(...)+`. This group has a quantifier `+`, that say to
+outer round brackets `(...)+`. This group has a quantifier `+`, that says to
 match its content *at least one time*.
 
 Then we have a simple char token `c`, and a second group `#1`: `(pa)+`.
@@ -206,6 +206,8 @@ that is an `[]int` inside the `RE` struct.
 **example:**
 
 ```v oksyntax
+import regex
+
 text := 'cpaz cpapaz cpapapaz'
 query := r'(c(pa)+z ?)+'
 mut re := regex.regex_opt(query) or { panic(err) }
@@ -230,10 +232,10 @@ for gi < re.groups.len {
 > To show the `group id number` in the result of the `get_query()`
 > the flag `debug` of the RE object must be `1` or `2`
 
-In order to simplify the use of the captured groups, it possible to use the
+In order to simplify the use of the captured groups, it is possible to use the
 utility function: `get_group_list`.
 
-This function return a list of groups using this support struct:
+This function returns a list of groups using this support struct:
 
 ```v oksyntax
 pub struct Re_group {
@@ -243,9 +245,11 @@ pub:
 }
 ```
 
-Here an example of use:
+Here is an example of use:
 
 ```v oksyntax
+import regex
+
 /*
 This simple function converts an HTML RGB value with 3 or 6 hex digits to
 an u32 value, this function is not optimized and it is only for didatical
@@ -254,8 +258,8 @@ purpose. Example: #A0B0CC #A9F
 fn convert_html_rgb(in_col string) u32 {
 	mut n_digit := if in_col.len == 4 { 1 } else { 2 }
 	mut col_mul := if in_col.len == 4 { 4 } else { 0 }
-	// this is the regex query, it use the V string interpolation to customize the regex query
-	// Note: If you want use escaped code you must use the r"" (raw) strings,
+	// this is the regex query, it uses the V string interpolation to customize the regex query
+	// Note: If you want to use escaped code you must use the r"" (raw) strings,
 	// *** please remember that the V interpoaltion doesn't work on raw strings. ***
 	query := '#([a-fA-F0-9]{${n_digit}})([a-fA-F0-9]{${n_digit}})([a-fA-F0-9]{${n_digit}})'
 	mut re := regex.regex_opt(query) or { panic(err) }
@@ -274,7 +278,7 @@ fn convert_html_rgb(in_col string) u32 {
 }
 ```
 
-Others utility functions are `get_group_by_id` and `get_group_bounds_by_id`
+Other utility functions are `get_group_by_id` and `get_group_bounds_by_id`
 that get directly the string of a group using its `id`:
 
 ```v ignore
@@ -302,8 +306,8 @@ The `.group_csave` array will be filled then, following this logic:
 
 `re.group_csave[0]` - number of total saved records
 `re.group_csave[1+n*3]` - id of the saved group
-`re.group_csave[1+n*3]` - start index in the source string of the saved group
-`re.group_csave[1+n*3]` - end index in the source string of the saved group
+`re.group_csave[2+n*3]` - start index in the source string of the saved group
+`re.group_csave[3+n*3]` - end index in the source string of the saved group
 
 The regex will save groups, until it finishes, or finds that the array has no
 more space. If the space ends, no error is raised, and further records will
@@ -419,6 +423,8 @@ use a name map in the `re` struct, using the function `re.get_group_by_name`.
 Here is a more complex example of using them:
 
 ```v oksyntax
+import regex
+
 // This function demonstrate the use of the named groups
 fn convert_html_rgb_n(in_col string) u32 {
 	mut n_digit := if in_col.len == 4 { 1 } else { 2 }
@@ -494,6 +500,8 @@ re.flag = regex.f_bin
 
 - `f_bin`: parse a string as bytes, utf-8 management disabled.
 
+- `f_ci`: match ASCII letters without case sensitivity.
+
 - `f_efm`: exit on the first char matches in the query, used by the
   find function.
 
@@ -509,8 +517,8 @@ re.flag = regex.f_bin
 
 ### Initializer
 
-These functions are helper that create the `RE` struct,
-a `RE` struct can be created manually if you needed.
+These functions are helpers that create the `RE` struct.
+A `RE` struct can be created manually if needed.
 
 #### **Simplified initializer**
 
@@ -522,7 +530,7 @@ pub fn regex_opt(in_query string) ?RE
 #### **Base initializer**
 
 ```v ignore
-// new_regex create a REgex of small size, usually sufficient for ordinary use
+// new create a RE of small size, usually sufficient for ordinary use
 pub fn new() RE
 ```
 
@@ -531,8 +539,8 @@ pub fn new() RE
 After an initializer is used, the regex expression must be compiled with:
 
 ```v ignore
-// compile compiles the REgex returning an error if the compilation fails
-pub fn (mut re RE) compile_opt(in_txt string) ?
+// compile_opt compile RE pattern string, returning an error if the compilation fails
+pub fn (mut re RE) compile_opt(pattern string) !
 ```
 
 ### Matching Functions
@@ -560,7 +568,7 @@ pub fn (mut re RE) find(in_txt string) (int, int)
 // the matches are [3,4] and [6,8]
 pub fn (mut re RE) find_all(in_txt string) []int
 
-// find_all find all the "non overlapping" occurrences of the matching pattern
+// find_all_str find all the "non overlapping" occurrences of the match pattern
 // return a list of strings
 // the result is like ['first match','secon match']
 pub fn (mut re RE) find_all_str(in_txt string) []string
@@ -570,7 +578,7 @@ pub fn (mut re RE) find_all_str(in_txt string) []string
 
 ```v ignore
 // replace return a string where the matches are replaced with the repl_str string,
-// this function support groups in the replace string
+// this function supports groups in the replace string
 pub fn (mut re RE) replace(in_txt string, repl string) string
 ```
 

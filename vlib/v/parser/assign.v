@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module parser
@@ -7,27 +7,23 @@ import v.ast
 
 fn (mut p Parser) assign_stmt() ast.Stmt {
 	mut defer_vars := p.defer_vars.clone()
-	p.defer_vars = []ast.Ident{}
+	p.defer_vars = []
 
-	exprs, comments := p.expr_list()
+	exprs := p.expr_list(true)
 
-	if !(p.inside_defer && p.tok.kind == .decl_assign) {
+	if !(p.inside_defer && p.defer_mode == .function && p.tok.kind == .decl_assign) {
 		defer_vars << p.defer_vars
 	}
 	p.defer_vars = defer_vars
-	return p.partial_assign_stmt(exprs, comments)
+	return p.partial_assign_stmt(exprs)
 }
-
-const max_expr_level = 100
 
 fn (mut p Parser) check_undefined_variables(names []string, val ast.Expr) ! {
 	p.expr_level++
 	defer {
 		p.expr_level--
 	}
-	if p.expr_level > parser.max_expr_level {
-		return error('expr level > ${parser.max_expr_level}')
-	}
+	p.check_expr_level()!
 	match val {
 		ast.Ident {
 			for name in names {
@@ -44,8 +40,8 @@ fn (mut p Parser) check_undefined_variables(names []string, val ast.Expr) ! {
 			if val.has_len {
 				p.check_undefined_variables(names, val.len_expr)!
 			}
-			if val.has_default {
-				p.check_undefined_variables(names, val.default_expr)!
+			if val.has_init {
+				p.check_undefined_variables(names, val.init_expr)!
 			}
 			for expr in val.exprs {
 				p.check_undefined_variables(names, expr)!
@@ -53,6 +49,11 @@ fn (mut p Parser) check_undefined_variables(names []string, val ast.Expr) ! {
 		}
 		ast.CallExpr {
 			p.check_undefined_variables(names, val.left)!
+			// arr.sort(a < b) , arr.sorted(a < b), it := [2,3,4].map(it*2), it := [2,3,4].filter(it % 2 == 0), etc.
+			if val.args.len == 1
+				&& val.name in ['sort', 'sorted', 'map', 'filter', 'any', 'all', 'count'] {
+				return
+			}
 			for arg in val.args {
 				p.check_undefined_variables(names, arg.expr)!
 			}
@@ -131,7 +132,12 @@ fn (mut p Parser) check_undefined_variables(names []string, val ast.Expr) ! {
 }
 
 fn (mut p Parser) check_cross_variables(exprs []ast.Expr, val ast.Expr) bool {
-	val_str := val.str()
+	// NOTE: For IndexExpr and SelectorExpr, we need to compare string representations.
+	// val_str must be computed before the match, because inside match arms `val` gets
+	// smartcast to the variant type, and calling .str() on e.g. IndexExpr would call
+	// the auto-generated struct str() instead of Expr.str().
+	// Only compute it for the types that actually need it.
+	val_str := if val is ast.IndexExpr || val is ast.SelectorExpr { val.str() } else { '' }
 	match val {
 		ast.Ident {
 			for expr in exprs {
@@ -181,21 +187,23 @@ fn (mut p Parser) check_cross_variables(exprs []ast.Expr, val ast.Expr) bool {
 		}
 		else {}
 	}
+
 	return false
 }
 
-fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comment) ast.Stmt {
+fn (mut p Parser) partial_assign_stmt(left []ast.Expr) ast.Stmt {
 	p.is_stmt_ident = false
 	op := p.tok.kind
+	if op == .power_assign {
+		p.register_auto_import('math')
+	}
 	mut pos := p.tok.pos()
 	p.next()
-	mut comments := []ast.Comment{cap: 2 * left_comments.len + 1}
-	comments << left_comments
-	comments << p.eat_comments()
-	mut right_comments := []ast.Comment{}
 	mut right := []ast.Expr{cap: left.len}
-	right, right_comments = p.expr_list()
-	comments << right_comments
+	old_assign_rhs := p.inside_assign_rhs
+	p.inside_assign_rhs = true
+	right = p.expr_list(true)
+	p.inside_assign_rhs = old_assign_rhs
 	end_comments := p.eat_comments(same_line: true)
 	mut has_cross_var := false
 	mut is_static := false
@@ -205,16 +213,22 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 		match mut lx {
 			ast.Ident {
 				if op == .decl_assign {
+					if lx.name.contains('.') {
+						return p.error_with_pos('non-name `${lx.name}` on left side of `:=`',
+							lx.pos)
+					}
 					if p.scope.known_var(lx.name) {
-						return p.error_with_pos('redefinition of `${lx.name}`', lx.pos)
+						if !(p.pref.translated_go && lx.name in ['err', 'ok']) {
+							return p.error_with_pos('redefinition of `${lx.name}`', lx.pos)
+						}
 					}
 					mut share := unsafe { ast.ShareType(0) }
 					if mut lx.info is ast.IdentVar {
 						share = lx.info.share
 						if lx.info.is_static {
-							if !p.pref.translated && !p.is_translated && !p.pref.is_fmt
-								&& !p.inside_unsafe_fn {
-								return p.error_with_pos('static variables are supported only in translated mode or in [unsafe] fn',
+							if !p.inside_unsafe && !p.pref.translated && !p.is_translated
+								&& !p.pref.is_fmt && !p.inside_unsafe_fn {
+								return p.error_with_pos('static variables are supported only in -translated mode, `unsafe{}` blocks, or in `@[unsafe] fn`',
 									lx.pos)
 							}
 							is_static = true
@@ -224,23 +238,28 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 						}
 					}
 					mut v := ast.Var{
-						name: lx.name
-						expr: if left.len == right.len { right[i] } else { ast.empty_expr }
-						share: share
-						is_mut: lx.is_mut || p.inside_for
-						pos: lx.pos
+						name:         lx.name
+						expr:         if left.len == right.len { right[i] } else { ast.empty_expr }
+						share:        share
+						is_mut:       p.scope_var_is_mut(lx.is_mut || p.inside_for)
+						is_static:    is_static
+						is_volatile:  is_volatile
+						pos:          lx.pos
 						is_stack_obj: p.inside_for
 					}
-					if p.pref.autofree {
-						r0 := right[0]
-						if r0 is ast.CallExpr {
-							// Set correct variable position (after the or block)
-							// so that autofree doesn't free it in cgen before
-							// it's declared. (`Or` variables are declared after the or block).
-							if r0.or_block.pos.pos > 0 && r0.or_block.stmts.len > 0 {
-								v.is_or = true
-								// v.pos = r0.or_block.pos.
-							}
+					if p.prev_tok.kind == .string {
+						v.typ = ast.string_type_idx
+					} else if p.prev_tok.kind == .rsbr {
+						v.typ = ast.array_type_idx
+					}
+					if p.pref.autofree && right.len > 0 {
+						expr_for_or := if v.expr !is ast.EmptyExpr {
+							v.expr
+						} else {
+							right[0]
+						}
+						if expr_has_block_or(expr_for_or) {
+							v.is_or = true
 						}
 					}
 					obj := ast.ScopeObject(v)
@@ -285,17 +304,56 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr, left_comments []ast.Comme
 			}
 		}
 	}
+	mut attr := ast.Attr{}
+	// This assign stmt has an attribute e.g. `x := [1,2,3] @[freed]`
+	if p.tok.kind == .at && p.tok.line_nr == p.prev_tok.line_nr {
+		p.check(.at)
+		p.check(.lsbr)
+		attrs := p.parse_attr(true)
+		if attrs.len != 1 {
+			p.error_with_pos('assignment attributes support at most one argument', p.prev_tok.pos())
+		}
+		attr = attrs[0]
+		p.check(.rsbr)
+	}
 	pos.update_last_line(p.prev_tok.line_nr)
+	p.expr_mod = ''
 	return ast.AssignStmt{
-		op: op
-		left: left
-		right: right
-		comments: comments
-		end_comments: end_comments
-		pos: pos
+		op:            op
+		left:          left
+		right:         right
+		end_comments:  end_comments
+		pos:           pos
 		has_cross_var: has_cross_var
-		is_simple: p.inside_for && p.tok.kind == .lcbr
-		is_static: is_static
-		is_volatile: is_volatile
+		is_simple:     p.inside_for && p.tok.kind == .lcbr
+		is_static:     is_static
+		is_volatile:   is_volatile
+		attr:          attr
+	}
+}
+
+fn expr_has_block_or(expr ast.Expr) bool {
+	return match expr {
+		ast.CallExpr {
+			expr.or_block.kind == .block && expr.or_block.stmts.len > 0
+		}
+		ast.SelectorExpr {
+			expr.or_block.kind == .block && expr.or_block.stmts.len > 0
+		}
+		ast.PrefixExpr {
+			expr.or_block.kind == .block && expr.or_block.stmts.len > 0
+		}
+		ast.SqlExpr {
+			expr.or_expr.kind == .block && expr.or_expr.stmts.len > 0
+		}
+		ast.IndexExpr {
+			expr.or_expr.kind == .block && expr.or_expr.stmts.len > 0
+		}
+		ast.Ident {
+			expr.or_expr.kind == .block && expr.or_expr.stmts.len > 0
+		}
+		else {
+			false
+		}
 	}
 }

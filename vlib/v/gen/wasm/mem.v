@@ -72,6 +72,12 @@ pub fn (mut g Gen) get_var_from_expr(node ast.Expr) ?Var {
 		ast.ParExpr {
 			return g.get_var_from_expr(node.expr)
 		}
+		ast.CastExpr {
+			// For cast expressions like &u32(), we need to look through
+			// the cast to get the underlying variable because WASM don't have
+			// really pointers like in C
+			return g.get_var_from_expr(node.expr)
+		}
 		ast.SelectorExpr {
 			mut addr := g.get_var_from_expr(node.expr) or {
 				// if place {
@@ -128,6 +134,15 @@ pub fn (mut g Gen) sp() wasm.GlobalIndex {
 	return g.sp()
 }
 
+pub fn (mut g Gen) hp() wasm.GlobalIndex {
+	if hp := g.heap_base {
+		return hp
+	}
+	hp := g.mod.new_global('__heap_base', false, .i32_t, false, wasm.constexpr_value(0))
+	g.heap_base = hp
+	return hp
+}
+
 pub fn (mut g Gen) new_local(name string, typ_ ast.Type) Var {
 	mut typ := typ_
 	ts := g.table.sym(typ)
@@ -146,8 +161,8 @@ pub fn (mut g Gen) new_local(name string, typ_ ast.Type) Var {
 	wtyp := g.get_wasm_type(typ)
 
 	mut v := Var{
-		name: name
-		typ: typ
+		name:       name
+		typ:        typ
 		is_address: is_address
 	}
 
@@ -173,6 +188,7 @@ pub fn (mut g Gen) new_local(name string, typ_ ast.Type) Var {
 			g.w_error('new_local: type `${*ts}` (${ts.info.type_name()}) is not a supported local type')
 		}
 	}
+
 	g.local_vars << v
 	return v
 }
@@ -204,13 +220,31 @@ pub fn (mut g Gen) literal_to_constant_expression(typ_ ast.Type, init ast.Expr) 
 				else {}
 			}
 		}
+		ast.Ident {
+			mut obj := init.obj
+			if obj !in [ast.ConstField, ast.GlobalField] {
+				obj = init.scope.find(init.name) or { return none }
+			}
+			match mut obj {
+				ast.ConstField {
+					return g.literal_to_constant_expression(typ, obj.expr)
+				}
+				ast.GlobalField {
+					return g.literal_to_constant_expression(typ, obj.expr)
+				}
+				else {
+					return none
+				}
+			}
+		}
 		else {}
 	}
+
 	return none
 }
 
 pub fn (mut g Gen) new_global(name string, typ_ ast.Type, init ast.Expr, is_global_mut bool) Global {
-	mut typ := typ_
+	mut typ := ast.mktyp(typ_)
 	ts := g.table.sym(typ)
 
 	match ts.info {
@@ -252,13 +286,13 @@ pub fn (mut g Gen) new_global(name string, typ_ ast.Type, init ast.Expr, is_glob
 
 	mut glbl := Global{
 		init: init_expr
-		v: Var{
-			name: name
-			typ: typ
+		v:    Var{
+			name:       name
+			typ:        typ
 			is_address: is_address
-			is_global: true
-			g_idx: g.mod.new_global(g.dbg_type_name(name, typ), false, g.get_wasm_type_int_literal(typ),
-				is_mut, cexpr)
+			is_global:  true
+			g_idx:      g.mod.new_global(g.dbg_type_name(name, typ), false,
+				g.get_wasm_type_int_literal(typ), is_mut, cexpr)
 		}
 	}
 
@@ -267,7 +301,7 @@ pub fn (mut g Gen) new_global(name string, typ_ ast.Type, init ast.Expr, is_glob
 
 // is_pure_type(voidptr) == true
 // is_pure_type(&Struct) == false
-pub fn (g Gen) is_pure_type(typ ast.Type) bool {
+pub fn (g &Gen) is_pure_type(typ ast.Type) bool {
 	if typ.is_pure_int() || typ.is_pure_float() || typ == ast.char_type_idx
 		|| typ.is_any_kind_of_pointer() || typ.is_bool() {
 		return true
@@ -282,6 +316,7 @@ pub fn (g Gen) is_pure_type(typ ast.Type) bool {
 		}
 		else {}
 	}
+
 	return false
 }
 
@@ -327,7 +362,7 @@ pub fn (mut g Gen) get(v Var) {
 	if v.is_address && g.is_pure_type(v.typ) {
 		g.load(v.typ, v.offset)
 	} else if v.is_address && v.offset != 0 {
-		g.func.i32_const(v.offset)
+		g.func.i32_const(i32(v.offset))
 		g.func.add(.i32_t)
 	}
 }
@@ -345,7 +380,7 @@ pub fn (mut g Gen) mov(to Var, v Var) {
 	if size > 16 {
 		g.ref(to)
 		g.ref(v)
-		g.func.i32_const(size)
+		g.func.i32_const(i32(size))
 		g.func.memory_copy()
 		return
 	}
@@ -410,8 +445,8 @@ pub fn (mut g Gen) set_set(v Var) {
 	}
 
 	from := Var{
-		typ: v.typ
-		idx: g.func.new_local_named(.i32_t, '__tmp<voidptr>')
+		typ:        v.typ
+		idx:        g.func.new_local_named(.i32_t, '__tmp<voidptr>')
 		is_address: v.is_address
 	}
 
@@ -419,11 +454,11 @@ pub fn (mut g Gen) set_set(v Var) {
 	g.mov(v, from)
 }
 
-// set structures with pointer, memcpy
-// set pointers with value, get local, store value
-// set value, set local
+// set structures with pointer, memcpy.
+// set pointers with value, get local, store value.
+// set value, set local.
 // -- set works with a single value present on the stack beforehand
-// -- not optimial for copying stack memory or shuffling structs
+// -- not optimal for copying stack memory or shuffling structs
 // -- use mov instead
 pub fn (mut g Gen) set(v Var) {
 	if !v.is_address {
@@ -452,8 +487,8 @@ pub fn (mut g Gen) set(v Var) {
 	}
 
 	from := Var{
-		typ: v.typ
-		idx: g.func.new_local_named(.i32_t, '__tmp<voidptr>')
+		typ:        v.typ
+		idx:        g.func.new_local_named(.i32_t, '__tmp<voidptr>')
 		is_address: v.is_address
 	}
 
@@ -461,11 +496,41 @@ pub fn (mut g Gen) set(v Var) {
 	g.mov(v, from)
 }
 
+// to satisfy inline assembly needs
+// never used by actual codegen
+pub fn (mut g Gen) tee(v Var) {
+	assert !v.is_global
+
+	if !v.is_address {
+		g.func.local_tee(v.idx)
+		return
+	}
+
+	if g.is_pure_type(v.typ) {
+		l := g.new_local('__tmp', v.typ)
+		g.func.local_tee(l.idx) // tee here, leave on stack
+
+		g.func.local_get(v.idx)
+		g.func.local_get(l.idx)
+		g.store(v.typ, v.offset)
+		return
+	}
+
+	from := Var{
+		typ:        v.typ
+		idx:        g.func.new_local_named(.i32_t, '__tmp<voidptr>')
+		is_address: v.is_address
+	}
+
+	g.func.local_tee(from.idx) // tee here, leave on stack
+	g.mov(v, from)
+}
+
 pub fn (mut g Gen) ref(v Var) {
 	g.ref_ignore_offset(v)
 
 	if v.offset != 0 {
-		g.func.i32_const(v.offset)
+		g.func.i32_const(i32(v.offset))
 		g.func.add(.i32_t)
 	}
 }
@@ -490,7 +555,7 @@ pub fn (mut g Gen) offset(v Var, typ ast.Type, offset int) Var {
 
 	nv := Var{
 		...v
-		typ: typ
+		typ:    typ
 		offset: v.offset + offset
 	}
 
@@ -534,7 +599,7 @@ pub fn (mut g Gen) zero_fill(v Var, size int) {
 	if size > 16 {
 		g.ref(v)
 		g.func.i32_const(0)
-		g.func.i32_const(size)
+		g.func.i32_const(i32(size))
 		g.func.memory_fill()
 		return
 	}
@@ -597,6 +662,9 @@ pub fn (mut g Gen) set_with_multi_expr(init ast.Expr, expected ast.Type, existin
 		}
 		ast.IfExpr {
 			g.if_expr(init, expected, existing_rvars)
+		}
+		ast.MatchExpr {
+			g.match_expr(init, expected, existing_rvars)
 		}
 		ast.CallExpr {
 			g.call_expr(init, expected, existing_rvars)
@@ -747,8 +815,8 @@ pub fn (mut g Gen) set_with_expr(init ast.Expr, v Var) {
 			}
 
 			from := Var{
-				typ: v.typ
-				idx: g.func.new_local_named(.i32_t, '__tmp<voidptr>')
+				typ:        v.typ
+				idx:        g.func.new_local_named(.i32_t, '__tmp<voidptr>')
 				is_address: v.is_address // true
 			}
 
@@ -823,8 +891,7 @@ pub fn (mut g Gen) housekeeping() {
 			mut buf := g.pool.buf.clone()
 
 			for reloc in g.pool.relocs {
-				binary.little_endian_put_u32_at(mut buf, u32(g.data_base + reloc.offset),
-					reloc.pos)
+				binary.little_endian_put_u32_at(mut buf, u32(g.data_base + reloc.offset), reloc.pos)
 			}
 			g.mod.new_data_segment(none, g.data_base, buf)
 		}
@@ -833,7 +900,7 @@ pub fn (mut g Gen) housekeeping() {
 		g.mod.assign_global_init(hp, wasm.constexpr_value(heap_base))
 	}
 
-	if g.pref.os == .wasi {
+	if g.pref.os == .wasi && !g.pref.is_shared {
 		mut fn_start := g.mod.new_function('_start', [], [])
 		{
 			fn_start.call('_vinit')

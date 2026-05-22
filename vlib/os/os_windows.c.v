@@ -1,25 +1,54 @@
 module os
 
 import strings
+import encoding.utf8.validate
 
 #flag windows -l advapi32
 #include <process.h>
 #include <sys/utime.h>
 
+// path_separator is the platform specific separator string, used between the folders, and filenames in a path. It is '/' on POSIX, and '\\' on Windows.
+pub const path_separator = '\\'
+
+// path_delimiter is the platform specific delimiter string, used between the paths in environment variables like PATH. It is ':' on POSIX, and ';' on Windows.
+pub const path_delimiter = ';'
+
+// path_devnull is a platform-specific file path of the null device.
+// It is '/dev/null' on POSIX, and r'\\.\nul' on Windows.
+pub const path_devnull = r'\\.\nul'
+
 // See https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createsymboliclinkw
-fn C.CreateSymbolicLinkW(&u16, &u16, u32) int
+fn C.CreateSymbolicLinkW(&u16, &u16, u32) i32
 
 // See https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createhardlinkw
-fn C.CreateHardLinkW(&u16, &u16, C.SECURITY_ATTRIBUTES) int
+fn C.CreateHardLinkW(&u16, &u16, C.SECURITY_ATTRIBUTES) i32
 
-fn C._getpid() int
+// See https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getshortpathnamew
+fn C.GetShortPathNameW(&u16, &u16, u32) u32
+
+fn C.AddVectoredExceptionHandler(u32, voidptr) voidptr
+
+fn C._getpid() i32
 
 const executable_suffixes = ['.exe', '.bat', '.cmd', '']
 
-pub const (
-	path_separator = '\\'
-	path_delimiter = ';'
-)
+// these consts are declared for parity with the nix version, their values are not used, except for -cross
+const s_ifmt = 0xF000 // type of file
+const s_ifdir = 0x4000 // directory
+const s_ifreg = 0x8000 // regular file
+const s_iflnk = 0xa000 // link
+const s_isuid = 0o4000 // SUID
+const s_isgid = 0o2000 // SGID
+const s_isvtx = 0o1000 // Sticky
+const s_irusr = 0o0400 // Read by owner
+const s_iwusr = 0o0200 // Write by owner
+const s_ixusr = 0o0100 // Execute by owner
+const s_irgrp = 0o0040 // Read by group
+const s_iwgrp = 0o0020 // Write by group
+const s_ixgrp = 0o0010 // Execute by group
+const s_iroth = 0o0004 // Read by others
+const s_iwoth = 0o0002 // Write by others
+const s_ixoth = 0o0001
 
 // Ref - https://docs.microsoft.com/en-us/windows/desktop/winprog/windows-data-types
 // A handle to an object.
@@ -89,26 +118,149 @@ mut:
 	b_inherit_handle       bool
 }
 
-struct C._utimbuf {
-	actime  int
-	modtime int
+@[inline]
+fn wide_ptr_to_string(wstr &u16) string {
+	return unsafe { string_from_wide(wstr) }
 }
 
-fn C._utime(&char, voidptr) int
-
-fn init_os_args_wide(argc int, argv &&u8) []string {
-	mut args_ := []string{len: argc}
-	for i in 0 .. argc {
-		args_[i] = unsafe { string_from_wide(&u16(argv[i])) }
+fn looks_like_utf16le_captured_output(raw string) bool {
+	if raw.len < 2 {
+		return false
 	}
-	return args_
+	// Allow odd-length buffers: Windows text-mode translation can insert
+	// extra bytes (e.g. \r before \n), producing odd-length UTF-16LE output.
+	// In that case, just ignore the trailing byte during detection.
+	if raw[0] == 0xff && raw[1] == 0xfe {
+		return true
+	}
+	sample_len := if raw.len > 128 { 128 } else { raw.len }
+	mut checked_pairs := 0
+	mut zero_high_bytes := 0
+	for i := 1; i < sample_len; i += 2 {
+		checked_pairs++
+		if raw[i] == 0 {
+			zero_high_bytes++
+		}
+	}
+	return checked_pairs > 0 && zero_high_bytes * 4 >= checked_pairs * 3
 }
+
+fn looks_like_utf16be_captured_output(raw string) bool {
+	if raw.len < 2 || raw.len % 2 != 0 {
+		return false
+	}
+	if raw[0] == 0xfe && raw[1] == 0xff {
+		return true
+	}
+	sample_len := if raw.len > 128 { 128 } else { raw.len }
+	mut checked_pairs := 0
+	mut zero_low_bytes := 0
+	for i := 0; i < sample_len; i += 2 {
+		checked_pairs++
+		if raw[i] == 0 {
+			zero_low_bytes++
+		}
+	}
+	return checked_pairs > 0 && zero_low_bytes * 4 >= checked_pairs * 3
+}
+
+@[manualfree]
+fn utf16_captured_output_to_string(raw string, little_endian bool) string {
+	mut start := 0
+	if little_endian && raw[0] == 0xff && raw[1] == 0xfe {
+		start = 2
+	} else if !little_endian && raw[0] == 0xfe && raw[1] == 0xff {
+		start = 2
+	}
+	pairs := (raw.len - start) / 2
+	mut wide := []u16{len: pairs + 1, init: u16(0)}
+	for idx := 0; idx < pairs; idx++ {
+		base := start + idx * 2
+		b0 := u16(raw[base])
+		b1 := u16(raw[base + 1])
+		wide[idx] = if little_endian { b0 | (b1 << 8) } else { (b0 << 8) | b1 }
+	}
+	res := unsafe { string_from_wide2(wide.data, pairs) }
+	unsafe { wide.free() }
+	return res
+}
+
+@[manualfree]
+fn decode_windows_captured_output(raw string) string {
+	if raw.len == 0 {
+		return ''
+	}
+	if looks_like_utf16le_captured_output(raw) {
+		return utf16_captured_output_to_string(raw, true)
+	}
+	if looks_like_utf16be_captured_output(raw) {
+		return utf16_captured_output_to_string(raw, false)
+	}
+	if validate.utf8_string(raw) {
+		// Check for embedded null bytes, which suggest this is actually UTF-16
+		// that wasn't detected (e.g. due to text-mode \r\n translation corrupting
+		// the byte alignment). Strip null bytes as a recovery heuristic.
+		mut has_null := false
+		for i in 0 .. raw.len {
+			if raw[i] == 0 {
+				has_null = true
+				break
+			}
+		}
+		if !has_null {
+			return raw
+		}
+		mut nulls := 0
+		for i in 0 .. raw.len {
+			if raw[i] == 0 {
+				nulls++
+			}
+		}
+		if nulls * 4 < raw.len {
+			return raw
+		}
+		// Contains many null bytes - likely corrupted UTF-16LE.
+		// Strip null bytes and normalize \r\n to \n (text-mode artifacts).
+		mut cleaned := strings.new_builder(raw.len)
+		for i in 0 .. raw.len {
+			if raw[i] == 0 {
+				continue
+			}
+			if raw[i] == 0x0D && i + 1 < raw.len && raw[i + 1] == 0x0A {
+				continue
+			}
+			cleaned.write_u8(raw[i])
+		}
+		return cleaned.str()
+	}
+	mut wide := raw.to_wide(from_ansi: true)
+	if isnil(wide) {
+		return raw
+	}
+	res := unsafe { string_from_wide(wide) }
+	unsafe { free(wide) }
+	return res
+}
+
+pub struct C._utimbuf {
+	actime  i64
+	modtime i64
+}
+
+fn C._utime(&char, voidptr) i32
 
 fn native_glob_pattern(pattern string, mut matches []string) ! {
 	$if debug {
 		// FindFirstFile() and FindNextFile() both have a globbing function.
 		// Unfortunately this is not as pronounced as under Unix, but should provide some functionality
 		eprintln('os.glob() does not have all the features on Windows as it has on Unix operating systems')
+	}
+	normalized_pattern := pattern.replace('\\', '/')
+	mut match_base := dir(normalized_pattern).replace('\\', '/')
+	if match_base == '.' {
+		match_base = ''
+	} else if match_base != '/' && !match_base.ends_with('/') {
+		match_base += '/'
 	}
 	mut find_file_data := Win32finddata{}
 	wpattern := pattern.replace('/', '\\').to_wide()
@@ -124,9 +276,12 @@ fn native_glob_pattern(pattern string, mut matches []string) ! {
 	}
 
 	// save first finding
-	fname := unsafe { string_from_wide(&find_file_data.c_file_name[0]) }
+	fname := wide_ptr_to_string(&find_file_data.c_file_name[0])
 	if fname !in ['.', '..'] {
 		mut fp := fname.replace('\\', '/')
+		if match_base != '' {
+			fp = '${match_base}${fp}'
+		}
 		if find_file_data.dw_file_attributes & u32(C.FILE_ATTRIBUTE_DIRECTORY) > 0 {
 			fp += '/'
 		}
@@ -135,11 +290,14 @@ fn native_glob_pattern(pattern string, mut matches []string) ! {
 
 	// check and save next findings
 	for i := 0; C.FindNextFile(h_find_files, voidptr(&find_file_data)) > 0; i++ {
-		filename := unsafe { string_from_wide(&find_file_data.c_file_name[0]) }
+		filename := wide_ptr_to_string(&find_file_data.c_file_name[0])
 		if filename in ['.', '..'] {
 			continue
 		}
 		mut fpath := filename.replace('\\', '/')
+		if match_base != '' {
+			fpath = '${match_base}${fpath}'
+		}
 		if find_file_data.dw_file_attributes & u32(C.FILE_ATTRIBUTE_DIRECTORY) > 0 {
 			fpath += '/'
 		}
@@ -147,7 +305,34 @@ fn native_glob_pattern(pattern string, mut matches []string) ! {
 	}
 }
 
-pub fn utime(path string, actime int, modtime int) ! {
+// short_path returns the Windows DOS 8.3 short path when it is available.
+// If the path does not exist, or if short names are unavailable, it returns the original path.
+pub fn short_path(path string) string {
+	if path == '' {
+		return ''
+	}
+	normalized := path.replace('/', '\\')
+	mut short_buf := [max_path_buffer_size]u16{}
+	mut wpath := normalized.to_wide()
+	defer {
+		unsafe { free(voidptr(wpath)) }
+	}
+	short_len := C.GetShortPathNameW(wpath, &short_buf[0], max_path_buffer_size)
+	if short_len > 0 && short_len < u32(max_path_buffer_size) {
+		return unsafe { string_from_wide2(&short_buf[0], int(short_len)) }
+	}
+	parent := dir(normalized)
+	if parent == '' || parent == '.' || parent == normalized || !is_dir(parent) {
+		return path
+	}
+	short_parent := short_path(parent)
+	if short_parent == parent {
+		return path
+	}
+	return join_path_single(short_parent, file_name(normalized))
+}
+
+pub fn utime(path string, actime i64, modtime i64) ! {
 	mut u := C._utimbuf{actime, modtime}
 	if C._utime(&char(path.str), voidptr(&u)) != 0 {
 		return error_with_code(posix_get_error_msg(C.errno), C.errno)
@@ -155,7 +340,7 @@ pub fn utime(path string, actime int, modtime int) ! {
 }
 
 pub fn ls(path string) ![]string {
-	if path.len == 0 {
+	if path == '' {
 		return error('ls() expects a folder, not an empty string')
 	}
 	mut find_file_data := Win32finddata{}
@@ -174,12 +359,16 @@ pub fn ls(path string) ![]string {
 	// NOTE:TODO: once we have a way to convert utf16 wide character to utf8
 	// we should use FindFirstFileW and FindNextFileW
 	h_find_files := C.FindFirstFile(path_files.to_wide(), voidptr(&find_file_data))
-	first_filename := unsafe { string_from_wide(&find_file_data.c_file_name[0]) }
+	// Handle cases where files cannot be opened. for example:"System Volume Information"
+	if h_find_files == C.INVALID_HANDLE_VALUE {
+		return error('ls(): Could not get a file handle: ' + get_error_msg(int(C.GetLastError())))
+	}
+	first_filename := wide_ptr_to_string(&find_file_data.c_file_name[0])
 	if first_filename != '.' && first_filename != '..' {
 		dir_files << first_filename
 	}
 	for C.FindNextFile(h_find_files, voidptr(&find_file_data)) > 0 {
-		filename := unsafe { string_from_wide(&find_file_data.c_file_name[0]) }
+		filename := wide_ptr_to_string(&find_file_data.c_file_name[0])
 		if filename != '.' && filename != '..' {
 			dir_files << filename.clone()
 		}
@@ -222,46 +411,40 @@ pub fn get_module_filename(handle HANDLE) !string {
 					return string_from_wide2(buf, sz)
 				}
 				else {
-					// Must handled with GetLastError and converted by FormatMessage
+					// Must handled with GetLastError and converted by FormatMessageW
 					return error('Cannot get file name from handle')
 				}
 			}
 		}
 	}
-	panic('this should be unreachable') // TODO remove unreachable after loop
+	panic('this should be unreachable') // TODO: remove unreachable after loop
 }
 
-// Ref - https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-formatmessagea#parameters
-const (
-	format_message_allocate_buffer = 0x00000100
-	format_message_argument_array  = 0x00002000
-	format_message_from_hmodule    = 0x00000800
-	format_message_from_string     = 0x00000400
-	format_message_from_system     = 0x00001000
-	format_message_ignore_inserts  = 0x00000200
-)
+// Ref - https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-FormatMessageWa#parameters
+const format_message_allocate_buffer = 0x00000100
+const format_message_argument_array = 0x00002000
+const format_message_from_hmodule = 0x00000800
+const format_message_from_string = 0x00000400
+const format_message_from_system = 0x00001000
+const format_message_ignore_inserts = 0x00000200
 
 // Ref - winnt.h
-const (
-	sublang_neutral = 0x00
-	sublang_default = 0x01
-	lang_neutral    = sublang_neutral
-)
+const sublang_neutral = 0x00
+const sublang_default = 0x01
+const lang_neutral = sublang_neutral
 
 // Ref - https://docs.microsoft.com/en-us/windows/win32/debug/system-error-codes--12000-15999-
-const (
-	max_error_code = 15841 // ERROR_API_UNAVAILABLE
-)
+const max_error_code = 15841
 
 // ptr_win_get_error_msg return string (voidptr)
 // representation of error, only for windows.
 fn ptr_win_get_error_msg(code u32) voidptr {
-	mut buf := unsafe { nil }
+	mut buf := voidptr(unsafe { nil })
 	// Check for code overflow
-	if code > u32(os.max_error_code) {
+	if code > u32(max_error_code) {
 		return buf
 	}
-	C.FormatMessage(os.format_message_allocate_buffer | os.format_message_from_system | os.format_message_ignore_inserts,
+	C.FormatMessageW(format_message_allocate_buffer | format_message_from_system | format_message_ignore_inserts,
 		0, code, 0, voidptr(&buf), 0, 0)
 	return buf
 }
@@ -275,30 +458,91 @@ pub fn get_error_msg(code int) string {
 	if ptr_text == 0 { // compare with null
 		return ''
 	}
-	return unsafe { string_from_wide(ptr_text) }
+	msg := wide_ptr_to_string(&u16(ptr_text))
+	C.LocalFree(ptr_text)
+	return msg
 }
 
 // execute starts the specified command, waits for it to complete, and returns its output.
-// In opposition to `raw_execute` this function will safeguard against content that is known to cause
-// a lot of problems when executing shell commands on Windows.
+// In opposition to `raw_execute` this function rejects `&&`, `||`, and linefeeds when they appear
+// outside double-quoted strings before delegating to `cmd.exe`.
 pub fn execute(cmd string) Result {
-	if cmd.contains(';') || cmd.contains('&&') || cmd.contains('||') || cmd.contains('\n') {
+	if windows_execute_has_forbidden_shell_operator(cmd) {
 		return Result{
 			exit_code: -1
-			output: ';, &&, || and \\n are not allowed in shell commands'
+			output:    '&&, || and \\n are not allowed in shell commands'
 		}
 	}
 	return unsafe { raw_execute(cmd) }
 }
 
+// exec starts the specified command with arguments, waits for it to complete, and returns its output.
+pub fn exec(args []string) Result {
+	if args.len == 0 {
+		return Result{
+			exit_code: -1
+			output:    'exec requires at least one argument'
+		}
+	}
+	mut command_line := requote_arg(args[0])
+	if args.len > 1 {
+		command_line += ' ' + requote_args(args[1..])
+	}
+	mut application_name := ''
+	filename_lc := args[0].to_lower_ascii()
+	if is_abs_path(args[0]) && !filename_lc.ends_with('.bat') && !filename_lc.ends_with('.cmd') {
+		application_name = args[0]
+	}
+	return windows_execute_command_line(command_line, application_name, args.join(' '), false)
+}
+
+// windows_execute_has_forbidden_shell_operator rejects only the command chaining operators that `cmd.exe`
+// treats specially outside double-quoted strings.
+fn windows_execute_has_forbidden_shell_operator(cmd string) bool {
+	mut in_double_quotes := false
+	for i := 0; i < cmd.len; i++ {
+		ch := cmd[i]
+		if ch == `"` {
+			in_double_quotes = !in_double_quotes
+			continue
+		}
+		if ch == `\n` {
+			return true
+		}
+		if in_double_quotes {
+			continue
+		}
+		if ch == `&` && i + 1 < cmd.len && cmd[i + 1] == `&` {
+			return true
+		}
+		if ch == `|` && i + 1 < cmd.len && cmd[i + 1] == `|` {
+			return true
+		}
+	}
+	return false
+}
+
 // raw_execute starts the specified command, waits for it to complete, and returns its output.
 // It's marked as `unsafe` to help emphasize the problems that may arise by allowing, for example,
 // user provided escape sequences.
-[unsafe]
+@[unsafe]
 pub fn raw_execute(cmd string) Result {
-	mut child_stdin := &u32(0)
-	mut child_stdout_read := &u32(0)
-	mut child_stdout_write := &u32(0)
+	mut pcmd := cmd
+	if cmd.contains('./') {
+		pcmd = pcmd.replace('./', '.\\')
+	}
+	if cmd.contains('2>') {
+		pcmd = 'cmd /c "${pcmd}"'
+	} else {
+		pcmd = 'cmd /c "${pcmd} 2>&1"'
+	}
+	return windows_execute_command_line(pcmd, '', cmd, true)
+}
+
+fn windows_execute_command_line(command_line_text string, application_name string, display_cmd string, expand_environment bool) Result {
+	mut child_stdin := &u32(unsafe { nil })
+	mut child_stdout_read := &u32(unsafe { nil })
+	mut child_stdout_write := &u32(unsafe { nil })
 	mut sa := SecurityAttributes{}
 	sa.n_length = sizeof(C.SECURITY_ATTRIBUTES)
 	sa.b_inherit_handle = true
@@ -309,51 +553,49 @@ pub fn raw_execute(cmd string) Result {
 		error_msg := get_error_msg(error_num)
 		return Result{
 			exit_code: error_num
-			output: 'exec failed (CreatePipe): ${error_msg}'
+			output:    'exec failed (CreatePipe): ${error_msg}'
 		}
 	}
-	set_handle_info_ok := C.SetHandleInformation(child_stdout_read, C.HANDLE_FLAG_INHERIT,
-		0)
+	set_handle_info_ok := C.SetHandleInformation(child_stdout_read, C.HANDLE_FLAG_INHERIT, 0)
 	if !set_handle_info_ok {
 		error_num := int(C.GetLastError())
 		error_msg := get_error_msg(error_num)
 		return Result{
 			exit_code: error_num
-			output: 'exec failed (SetHandleInformation): ${error_msg}'
+			output:    'exec failed (SetHandleInformation): ${error_msg}'
 		}
 	}
 	proc_info := ProcessInformation{}
 	start_info := StartupInfo{
-		lp_reserved2: 0
-		lp_reserved: 0
-		lp_desktop: 0
-		lp_title: 0
-		cb: sizeof(C.PROCESS_INFORMATION)
-		h_std_input: child_stdin
+		lp_reserved2: unsafe { nil }
+		lp_reserved:  unsafe { nil }
+		lp_desktop:   unsafe { nil }
+		lp_title:     unsafe { nil }
+		cb:           sizeof(StartupInfo)
+		h_std_input:  child_stdin
 		h_std_output: child_stdout_write
-		h_std_error: child_stdout_write
-		dw_flags: u32(C.STARTF_USESTDHANDLES)
+		h_std_error:  child_stdout_write
+		dw_flags:     u32(C.STARTF_USESTDHANDLES)
 	}
 
-	mut pcmd := cmd
-	if cmd.contains('./') {
-		pcmd = pcmd.replace('./', '.\\')
+	mut command_line_ptr := command_line_text.to_wide()
+	mut expanded_command_line := [32768]u16{}
+	if expand_environment {
+		C.ExpandEnvironmentStringsW(command_line_ptr, voidptr(&expanded_command_line), 32768)
+		command_line_ptr = unsafe { &expanded_command_line[0] }
 	}
-	if cmd.contains('2>') {
-		pcmd = 'cmd /c "${pcmd}"'
-	} else {
-		pcmd = 'cmd /c "${pcmd} 2>&1"'
+	mut application_name_ptr := &u16(unsafe { nil })
+	if application_name != '' {
+		application_name_ptr = application_name.to_wide()
 	}
-	command_line := [32768]u16{}
-	C.ExpandEnvironmentStringsW(pcmd.to_wide(), voidptr(&command_line), 32768)
-	create_process_ok := C.CreateProcessW(0, &command_line[0], 0, 0, C.TRUE, 0, 0, 0,
-		voidptr(&start_info), voidptr(&proc_info))
+	create_process_ok := C.CreateProcessW(application_name_ptr, command_line_ptr, 0, 0, C.TRUE,
+		C.CREATE_NO_WINDOW, 0, 0, voidptr(&start_info), voidptr(&proc_info))
 	if !create_process_ok {
 		error_num := int(C.GetLastError())
 		error_msg := get_error_msg(error_num)
 		return Result{
 			exit_code: error_num
-			output: 'exec failed (CreateProcess) with code ${error_num}: ${error_msg} cmd: ${cmd}'
+			output:    'exec failed (CreateProcess) with code ${error_num}: ${error_msg} cmd: ${display_cmd}'
 		}
 	}
 	C.CloseHandle(child_stdin)
@@ -364,15 +606,14 @@ pub fn raw_execute(cmd string) Result {
 	for {
 		mut result := false
 		unsafe {
-			result = C.ReadFile(child_stdout_read, &buf[0], 1000, voidptr(&bytes_read),
-				0)
+			result = C.ReadFile(child_stdout_read, &buf[0], 1000, voidptr(&bytes_read), 0)
 			read_data.write_ptr(&buf[0], int(bytes_read))
 		}
 		if result == false || int(bytes_read) == 0 {
 			break
 		}
 	}
-	soutput := read_data.str()
+	soutput := decode_windows_captured_output(read_data.str())
 	unsafe { read_data.free() }
 	exit_code := u32(0)
 	C.WaitForSingleObject(proc_info.h_process, C.INFINITE)
@@ -380,7 +621,7 @@ pub fn raw_execute(cmd string) Result {
 	C.CloseHandle(proc_info.h_process)
 	C.CloseHandle(proc_info.h_thread)
 	return Result{
-		output: soutput
+		output:    soutput
 		exit_code: int(exit_code)
 	}
 }
@@ -409,6 +650,12 @@ pub fn symlink(origin string, target string) ! {
 	return error('could not symlink')
 }
 
+// readlink reads the target of a symbolic link.
+// TODO: implement this for windows too.
+pub fn readlink(path string) !string {
+	return error('${@METHOD} not yet supported on windows')
+}
+
 pub fn link(origin string, target string) ! {
 	res := C.CreateHardLinkW(target.to_wide(), origin.to_wide(), C.NULL)
 	// 1 = success, != 1 failure => https://stackoverflow.com/questions/33010440/createsymboliclink-on-windows-10
@@ -425,8 +672,10 @@ pub fn (mut f File) close() {
 		return
 	}
 	f.is_opened = false
-	C.fflush(f.cfile)
-	C.fclose(f.cfile)
+	cfile := f.cfile
+	f.cfile = unsafe { nil }
+	C.fflush(cfile)
+	C.fclose(cfile)
 }
 
 pub struct ExceptionRecord {
@@ -471,22 +720,23 @@ pub fn add_vectored_exception_handler(first bool, handler VectoredExceptionHandl
 pub fn uname() Uname {
 	nodename := hostname() or { '' }
 	// ToDO: environment variables have low reliability; check for another quick way
-	machine := getenv('PROCESSOR_ARCHITECTURE') // * note: 'AMD64' == 'x86_64' (not standardized, but 'x86_64' use is more common; but, python == 'AMD64')
+	machine :=
+		getenv('PROCESSOR_ARCHITECTURE') // * note: 'AMD64' == 'x86_64' (not standardized, but 'x86_64' use is more common; but, python == 'AMD64')
 	version_info := execute('cmd /d/c ver').output
 	version_n := (version_info.split(' '))[3].replace(']', '').trim_space()
 	return Uname{
-		sysname: 'Windows_NT' // as of 2022-12, WinOS has only two possible kernels ~ 'Windows_NT' or 'Windows_9x'
+		sysname:  'Windows_NT' // as of 2022-12, WinOS has only two possible kernels ~ 'Windows_NT' or 'Windows_9x'
 		nodename: nodename
-		machine: machine.trim_space()
-		release: (version_n.split('.'))[0..2].join('.').trim_space() // Major.minor-only == "primary"/release version
-		version: (version_n.split('.'))[2].trim_space()
+		machine:  machine.trim_space()
+		release:  (version_n.split('.'))[0..2].join('.').trim_space() // Major.minor-only == "primary"/release version
+		version:  (version_n.split('.'))[2].trim_space()
 	}
 }
 
 pub fn hostname() !string {
 	hostname := [255]u16{}
 	size := u32(255)
-	res := C.GetComputerNameW(&hostname[0], &size)
+	res := C.GetComputerNameW(&hostname[0], voidptr(&size))
 	if !res {
 		return error(get_error_msg(int(C.GetLastError())))
 	}
@@ -496,15 +746,14 @@ pub fn hostname() !string {
 pub fn loginname() !string {
 	loginname := [255]u16{}
 	size := u32(255)
-	res := C.GetUserNameW(&loginname[0], &size)
+	res := C.GetUserNameW(&loginname[0], voidptr(&size))
 	if !res {
 		return error(get_error_msg(int(C.GetLastError())))
 	}
 	return unsafe { string_from_wide(&loginname[0]) }
 }
 
-// ensure_folder_is_writable checks that `folder` exists, and is writable to the process
-// by creating an empty file in it, then deleting it.
+// ensure_folder_is_writable checks that `folder` exists, and is writable to the process, by creating an empty file in it, then deleting it.
 pub fn ensure_folder_is_writable(folder string) ! {
 	if !exists(folder) {
 		return error_with_code('`${folder}` does not exist', 1)
@@ -520,52 +769,38 @@ pub fn ensure_folder_is_writable(folder string) ! {
 	rm(tmp_perm_check)!
 }
 
-[inline]
+@[inline]
 pub fn getpid() int {
 	return C._getpid()
 }
 
-[inline]
+@[inline]
 pub fn getppid() int {
 	return 0
 }
 
-[inline]
+@[inline]
 pub fn getuid() int {
 	return 0
 }
 
-[inline]
+@[inline]
 pub fn geteuid() int {
 	return 0
 }
 
-[inline]
+@[inline]
 pub fn getgid() int {
 	return 0
 }
 
-[inline]
+@[inline]
 pub fn getegid() int {
 	return 0
 }
 
 pub fn posix_set_permission_bit(path_s string, mode u32, enable bool) {
 	// windows has no concept of a permission mask, so do nothing
-}
-
-//
-
-pub fn (mut c Command) start() ! {
-	panic('not implemented')
-}
-
-pub fn (mut c Command) read_line() string {
-	panic('not implemented')
-}
-
-pub fn (mut c Command) close() ! {
-	panic('not implemented')
 }
 
 fn C.GetLongPathName(short_path &u16, long_path &u16, long_path_bufsize u32) u32
@@ -585,6 +820,36 @@ fn get_long_path(path string) !string {
 	if res == 0 {
 		return error(get_error_msg(int(C.GetLastError())))
 	}
-	long_path := unsafe { string_from_wide(&long_path_buf[0]) }
+	long_path := wide_ptr_to_string(&long_path_buf[0])
 	return long_path
+}
+
+// page_size returns the page size in bytes.
+pub fn page_size() int {
+	sinfo := C.SYSTEM_INFO{}
+	C.GetSystemInfo(&sinfo)
+	return int(sinfo.dwPageSize)
+}
+
+// disk_usage returns disk usage of `path`.
+pub fn disk_usage(path string) !DiskUsage {
+	mut free_bytes_available_to_caller := u64(0)
+	mut total := u64(0)
+	mut available := u64(0)
+	mut ret := false
+	if path == '.' || path == '' {
+		ret = C.GetDiskFreeSpaceExA(&char(unsafe { nil }), &free_bytes_available_to_caller, &total,
+			&available)
+	} else {
+		ret = C.GetDiskFreeSpaceExA(&char(path.str), &free_bytes_available_to_caller, &total,
+			&available)
+	}
+	if ret == false {
+		return error('cannot get disk usage of path')
+	}
+	return DiskUsage{
+		total:     total
+		available: available
+		used:      total - available
+	}
 }

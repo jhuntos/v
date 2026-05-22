@@ -49,7 +49,7 @@ It will create `primes.v` with the following contents:
 
 
 ```v
-[translated]
+@[translated]
 module main
 
 fn is_prime(x int) bool {
@@ -91,7 +91,7 @@ with lots of functions and types, and you don't want to manually type their defi
 
 For this C2V has a wrapper mode.
 
-We have a simple file `usersapi.h`. By running `v translate -wrapper usersapi.c` 
+We have a simple file `usersapi.h`. By running `v translate wrapper usersapi.c`
 we get `usersapi.v` with just the function definitions. Function bodies are skipped.
 
 ```c
@@ -243,7 +243,6 @@ v -o doom_v/doom.o -w -translated doom_v
 
 cc -o doomv \
   $DOOM/src/doom/doom_v/doom.o \
-
   $DOOM/src/CMakeFiles/chocolate-doom.dir/*.o \
   $DOOM/textscreen/CMakeFiles/textscreen.dir/*.o \
   $DOOM/pcsound/CMakeFiles/pcsound.dir/*.o \

@@ -4,7 +4,12 @@
 </p>
 <h1>The V Programming Language</h1>
 
-[vlang.io](https://vlang.io) | [Docs](https://github.com/vlang/v/blob/master/doc/docs.md) | [Changelog](https://github.com/vlang/v/blob/master/CHANGELOG.md) | [Speed](https://fast.vlang.io/) | [Contributing & compiler design](https://github.com/vlang/v/blob/master/CONTRIBUTING.md)
+[vlang.io](https://vlang.io)
+| [Docs](https://github.com/vlang/v/blob/master/doc/docs.md)
+| [Changelog](https://github.com/vlang/v/blob/master/CHANGELOG.md)
+| [Speed](https://fast.vlang.io/)
+| [Contributing & compiler design](https://github.com/vlang/v/blob/master/CONTRIBUTING.md)
+
 </div>
 <div align="center" style="display:grid;place-items:center;">
 <!--
@@ -14,8 +19,9 @@
 [![Sponsor][SponsorBadge]][SponsorUrl]
 [![Patreon][PatreonBadge]][PatreonUrl]
 [![Discord][DiscordBadge]][DiscordUrl]
-[![Twitter][TwitterBadge]][TwitterUrl]
+[![X][XBadge]][XUrl]
 [![Modules][ModulesBadge]][ModulesUrl]
+
 </div>
 
 ## Key Features of V
@@ -37,63 +43,67 @@
 - Easy cross-compilation
 - REPL
 - [Built-in ORM](https://github.com/vlang/v/blob/master/doc/docs.md#orm)
-- [Built-in web framework](https://github.com/vlang/v/blob/master/vlib/vweb/README.md)
+- [Built-in web framework](https://github.com/vlang/v/blob/master/vlib/veb/README.md)
 - C and JavaScript backends
 - Great for writing low-level software ([Vinix OS](https://github.com/vlang/vinix))
 
-## Stability guarantee and future changes
+## Stability, future changes, post 1.0 freeze
 
-Despite being at an early development stage, the V language is relatively stable and has
-backwards compatibility guarantee, meaning that the code you write today is guaranteed
-to work a month, a year, or five years from now.
+Despite being at an early development stage, the V language is relatively stable, and doesn't
+change often. But there will be changes before 1.0.
+Most changes in the syntax are handled via vfmt automatically.
 
-There still may be minor syntax changes before the 1.0 release, but they will be handled
-automatically via `vfmt`, as has been done in the past.
-
-The V core APIs (primarily the `os` module) will still have minor changes until
-they are stabilized in V 1.0. Of course the APIs will grow after that, but without breaking
+The V core APIs (primarily the `os` module) will also have minor changes until
+they are stabilized in V 1.0. Of course, the APIs will grow after that, but without breaking
 existing code.
 
-Unlike many other languages, V is not going to be always changing, with new features
-being introduced and old features modified. It is always going to be a small and simple
+After the 1.0 release V is going to be in the "feature freeze" mode. That means no breaking changes
+in the language, only bug fixes and performance improvements. Similar to Go.
+
+Will there be V 2.0? Not within a decade after 1.0, perhaps not ever.
+
+To sum it up, unlike many other languages, V is not going to be always changing, with new features
+introduced and old features modified. It is always going to be a small and simple
 language, very similar to the way it is right now.
 
 ## Installing V from source
 
---> **_(this is the preferred method)_**
+**This is the preferred method.**
 
-### Linux, macOS, Windows, *BSD, Solaris, WSL, etc.
+### Linux, macOS, Windows, \*BSD, Solaris, WSL, etc.
 
 Usually, installing V is quite simple if you have an environment that already has a
 functional `git` installation.
 
-To get started, simply try to execute the following in your terminal/shell:
+Note: On Windows, run `makev.bat` instead of `make` in CMD, or `./makev.bat` in
+PowerShell.
+Note: On Ubuntu/Debian, you may need to run `sudo apt install git build-essential make` first.
 
+To get started, execute the following in your terminal/shell:
 ```bash
-git clone https://github.com/vlang/v
+git clone --depth=1 https://github.com/vlang/v
 cd v
 make
-# HINT: Using Windows? run make.bat in a cmd shell, or ./make.bat in PowerShell
 ```
 
-That should be it and you should find your V executable at `[path to V repo]/v`.
+That should be it, and you should find your V executable at `[path to V repo]/v`.
 `[path to V repo]` can be anywhere.
 
-(As in the hint above, on Windows `make` means running `make.bat`.)
+(Like the note above says, on Windows, use `makev.bat`, instead of `make`.)
 
-Now you can try `./v run examples/hello_world.v` (or `v run examples/hello_world.v` in cmd shell).
+Now try running `./v run examples/hello_world.v` (or `v run examples/hello_world.v` in cmd shell).
 
-* *Trouble? Please see the note above and link to
+- *Trouble? Please see the notes above, and link to
   [Installation Issues](https://github.com/vlang/v/discussions/categories/installation-issues)
   for help.*
 
-V is constantly being updated. To update V, simply run:
+Note: V is being constantly updated. To update V to its latest version, simply run:
 
 ```bash
 v up
 ```
 
-> **Note**
+> [!NOTE]
 > If you run into any trouble, or you have a different operating
 > system or Linux distribution that doesn't install or work immediately, please see
 > [Installation Issues](https://github.com/vlang/v/discussions/categories/installation-issues)
@@ -101,6 +111,93 @@ v up
 >
 > If you can't find your problem, please add it to an existing discussion if one exists for
 > your OS, or create a new one if a main discussion doesn't yet exist for your OS.
+
+### Void Linux
+
+```bash
+# xbps-install -Su base-devel
+# xbps-install libatomic-devel
+$ git clone --depth=1 https://github.com/vlang/v
+$ cd v
+$ make
+```
+
+### Docker
+
+```bash
+git clone --depth=1 https://github.com/vlang/v
+cd v
+docker build -t vlang .
+docker run --rm -it vlang:latest
+```
+
+### Docker with Alpine/musl
+
+```bash
+git clone --depth=1 https://github.com/vlang/v
+cd v
+docker build -t vlang_alpine - < Dockerfile.alpine
+alias with_alpine='docker run -u 1000:1000 --rm -it -v .:/src -w /src vlang_alpine:latest'
+```
+
+Compiling *static* executables, ready to be copied to a server, that is running
+another linux distro, without dependencies:
+```bash
+with_alpine v -skip-unused -prod -cc gcc -cflags -static -compress examples/http_server.v
+with_alpine v -skip-unused -prod -cc gcc -cflags -static -compress -gc none examples/hello_world.v
+ls -la examples/http_server examples/hello_world
+file   examples/http_server examples/hello_world
+examples/http_server: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, no section header
+examples/hello_world: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, no section header
+```
+
+You should see something like this:
+```
+-rwxr-xr-x 1 root root  16612 May 27 17:07 examples/hello_world
+-rwxr-xr-x 1 root root 335308 May 27 17:07 examples/http_server
+```
+
+### FreeBSD
+
+On FreeBSD, V needs `boehm-gc-threaded` package preinstalled. After installing it, you can use the
+same script, like on Linux/macos:
+
+```bash
+pkg install boehm-gc-threaded
+git clone --depth=1 https://github.com/vlang/v
+cd v
+make
+```
+
+### OpenBSD
+
+On OpenBSD (release 7.8), V needs `boehm-gc` and `openssl-3.5` packages preinstalled. After
+installing them, use GNU `make` (installed with `gmake` package), to build V.
+
+```bash
+pkg_add boehm-gc openssl%3.5 gmake
+git clone --depth=1 https://github.com/vlang/v
+cd v
+gmake
+```
+
+### Termux/Android
+
+On Termux, V needs some packages preinstalled - a working C compiler, also `libexecinfo`,
+`libgc` and `libgc-static`. After installing them, you can use the same script, like on
+Linux/macos:
+
+```bash
+pkg install clang libexecinfo libgc libgc-static tcc make git
+pkg update
+git clone --depth=1 https://github.com/vlang/v
+cd v
+make
+./v symlink
+```
+Note: there is *no* need for `sudo ./v symlink` on Termux (and sudo is not installed by default).
+For faster development builds, keep the Termux `tcc` package installed; V will use it by default
+when no compatible bundled `thirdparty/tcc` binary is available on the host.
 
 ### C compiler
 
@@ -121,16 +218,22 @@ Otherwise, follow these instructions:
 
 ### Symlinking
 
-> **Note**
+> [!NOTE]
 > It is *highly recommended*, that you put V on your PATH. That saves
 > you the effort to type in the full path to your v executable every time.
 > V provides a convenience `v symlink` command to do that more easily.
 
-On Unix systems, it creates a `/usr/local/bin/v` symlink to your
-executable. To do that, run:
+On Unix systems, it creates a `v` symlink in `/usr/local/bin` by
+default. To do that, run:
 
 ```bash
 sudo ./v symlink
+```
+
+You can also pass a different directory, for example:
+
+```bash
+./v symlink ~/.local/bin
 ```
 
 On Windows, start a new shell with administrative privileges, for example by pressing the
@@ -142,81 +245,34 @@ type:
 v symlink
 ```
 
-(or `./v symlink` in PowerShell)
+(or `.\v symlink` in PowerShell)
+
+You can pass a different directory there too, for example
+`v symlink C:\Users\you\bin`.
 
 That will make V available everywhere, by adding it to your PATH. Please restart your
 shell/editor after that, so that it can pick up the new PATH variable.
 
-> **Note**
+> [!NOTE]
 > There is no need to run `v symlink` more than once - v will still be available, even after
-> `v up`, restarts, and so on.  You only need to run it again if you decide to move the V repo
+> `v up`, restarts, and so on. You only need to run it again if you decide to move the V repo
 > folder somewhere else.
-
-### Void Linux
-
-<details><summary>Expand Void Linux instructions</summary>
-
-```bash
-# xbps-install -Su base-devel
-# xbps-install libatomic-devel
-$ git clone https://github.com/vlang/v
-$ cd v
-$ make
-```
-
-</details>
-
-### Docker
-
-<details><summary>Expand Docker instructions</summary>
-
-```bash
-git clone https://github.com/vlang/v
-cd v
-docker build -t vlang .
-docker run --rm -it vlang:latest
-```
-
-### Docker with Alpine/musl
-
-```bash
-git clone https://github.com/vlang/v
-cd v
-docker build -t vlang --file=Dockerfile.alpine .
-docker run --rm -it vlang:latest
-```
-
-</details>
-
-### Termux/Android
-
-On Termux, V needs some packages preinstalled - a working C compiler, also `libexecinfo`,
-`libgc` and `libgc-static`. After installing them, you can use the same script, like on
-Linux/macos:
-
-```bash
-pkg install clang libexecinfo libgc libgc-static make git
-git clone https://github.com/vlang/v
-cd v
-make
-```
 
 ## Editor/IDE Plugins
 
+- [Atom](https://github.com/vlang/awesome-v#atom)
+- [CodeLite](doc/codelite.md)
+- [Emacs](https://github.com/vlang/awesome-v#emacs)
+- [JetBrains](https://plugins.jetbrains.com/plugin/20287-vlang/docs/syntax-highlighting.html)
+- [Sublime Text 3](https://github.com/vlang/awesome-v#sublime-text-3)
+- [Vim](https://github.com/vlang/awesome-v#vim)
+- [Vim/Neovim Runtime Files](editors/vim)
+- [VS Code](https://marketplace.visualstudio.com/items?itemName=VOSCA.vscode-v-analyzer)
+- [zed](https://github.com/lv37/zed-v)
+
+
 To bring IDE functions for the V programming languages to your editor, check out
-[v-analyzer](https://github.com/v-analyzer/v-analyzer). It provides a
-[VS Code extension](https://marketplace.visualstudio.com/items?itemName=VOSCA.vscode-v-analyzer)
-and language server capabilities for other editors.
-
-The plugin for JetBrains IDEs (IntelliJ, CLion, GoLand, etc.) also offers a great development
-experience with V. You can find all features in [its documentation](https://plugins.jetbrains.com/plugin/20287-vlang/docs/syntax-highlighting.html).
-
-Other Plugins:
-
-- [Vim plugins](https://github.com/vlang/awesome-v#vim)
-- [Emacs plugins](https://github.com/vlang/awesome-v#emacs)
-- [Sublime Text 3 plugins](https://github.com/vlang/awesome-v#sublime-text-3)
-- [Atom plugins](https://github.com/vlang/awesome-v#atom)
+[v-analyzer](https://github.com/vlang/v-analyzer). It provides language server capabilities.
 
 ## Testing and running the examples
 
@@ -233,6 +289,8 @@ hello world
 >>>
 ```
 
+`v self` defaults to `-gc none`. Pass `-gc <mode>` if you need a different GC mode.
+
 ```bash
 cd examples
 v hello_world.v && ./hello_world    # or simply
@@ -243,16 +301,25 @@ v run news_fetcher.v
 v run tetris/tetris.v
 ```
 
+When a project has a `.vvmrc` file, `v <project>` and `v run <project>` try
+to use the requested V binary (for example `v0.4.6`) before falling back to
+the current compiler.
+
+
 <img src='https://raw.githubusercontent.com/vlang/v/master/examples/tetris/screenshot.png' width=300 alt='tetris screenshot'>
 
-In order to build Tetris or 2048 (or anything else using `sokol` or `gg` graphics modules),
-you will need additional development libraries for your system.
+## Sokol and GG GUI apps/games:
+
+In order to build Tetris or 2048 (or anything else using the `sokol` or `gg` graphics modules),
+you will need to install additional development libraries for your system.
 
 | System              | Installation method                                                                                |
 |---------------------|----------------------------------------------------------------------------------------------------|
-| Debian/Ubuntu based | `sudo apt install libxi-dev libxcursor-dev libgl-dev`                                                        |
-| Fedora/RH/CentOS    | `sudo dnf install libXcursor-devel libXi-devel libX11-devel libglvnd-devel`                        |
-| NixOS               | add `xorg.libX11.dev xorg.libXcursor.dev xorg.libXi.dev libGL.dev` to `environment.systemPackages` |
+| Debian/Ubuntu based | Run `sudo apt install libxi-dev libxcursor-dev libgl-dev libxrandr-dev libasound2-dev`             |
+| Fedora/RH/CentOS    | Run `sudo dnf install libXi-devel libXcursor-devel libX11-devel libXrandr-devel libglvnd-devel`    |
+|                     |                                                                                                    |
+| NixOS               | Add `xorg.libX11.dev xorg.libXcursor.dev xorg.libXi.dev xorg.libXrandr.dev libGL.dev` to           |
+|                     | to `environment.systemPackages`                                                                    |
 
 ## V net.http, net.websocket, `v install`
 
@@ -260,6 +327,13 @@ The net.http module, the net.websocket module, and the `v install` command may a
 V comes with a version of mbedtls, which should work on all systems. If you find a need to
 use OpenSSL instead, you will need to make sure that it is installed on your system, then
 use the `-d use_openssl` switch when you compile.
+
+Note: Mbed-TLS is smaller and easier to install on windows too (V comes with it), but if you
+write programs, that do lots of http requests to HTTPS/SSL servers, in most cases, it is *best*
+to compile with `-d use_openssl`, and do so on a system, where you do have OpenSSL installed
+(see below). Mbed-TLS is slower, and can have more issues, especially when you are doing parallel
+http requests to multiple hosts (for example in web scrapers, REST API clients, RSS readers, etc).
+On windows, it is better to run such programs in WSL2.
 
 To install OpenSSL on non-Windows systems:
 
@@ -296,7 +370,7 @@ https://github.com/vlang/ui
 <!---
 ## JavaScript backend
 
-[examples/hello_v_js.v](examples/hello_v_js.v):
+[examples/js_hello_world.v](examples/js_hello_world.v):
 
 ```v
 fn main() {
@@ -307,7 +381,7 @@ fn main() {
 ```
 
 ```bash
-v -o hi.js examples/hello_v_js.v && node hi.js
+v -o hi.js examples/js_hello_world.v && node hi.js
 Hello from V.js
 Hello from V.js
 Hello from V.js
@@ -328,7 +402,7 @@ With V's `vab` tool, building V UI and graphical apps for Android can become as 
 ## Developing web applications
 
 Check out the
-[Building a simple web blog](https://github.com/vlang/v/blob/master/tutorials/building_a_simple_web_blog_with_vweb/README.md)
+[Building a simple web blog](https://github.com/vlang/v/blob/master/tutorials/building_a_simple_web_blog_with_veb/README.md)
 tutorial and Gitly, a light and fast alternative to GitHub/GitLab:
 
 https://github.com/vlang/gitly
@@ -347,12 +421,23 @@ https://github.com/vlang/vinix
 
 ## Acknowledgement
 
+### TCC
+
 V thanks Fabrice Bellard for his original work on the
 [TCC - Tiny C Compiler](https://bellard.org/tcc/).
 Note the TCC website is old; the current TCC repository can be found
 [here](https://repo.or.cz/w/tinycc.git).
 V utilizes pre-built TCC binaries located at
 [https://github.com/vlang/tccbin/](https://github.com/vlang/tccbin/).
+On Linux, `make` retries the portable `thirdparty-linuxmusl-*` TCC bundle when
+the host-specific bundle does not run on the current system.
+To rebuild the bundled `thirdparty/tcc` in place from upstream TinyCC on the
+platforms that have an in-tree build script, run `make latest_tcc_source`.
+Pass `TCC_COMMIT=<hash-or-branch>` to pin a specific upstream revision.
+
+### PVS-Studio
+
+[PVS-Studio](https://pvs-studio.com/pvs-studio/?utm_source=website&utm_medium=github&utm_campaign=open_source) - static analyzer for C, C++, C#, and Java code.
 
 ## Troubleshooting
 
@@ -364,13 +449,13 @@ section on our
 [WorkflowBadge]: https://github.com/vlang/v/workflows/CI/badge.svg
 [DiscordBadge]: https://img.shields.io/discord/592103645835821068?label=Discord&logo=discord&logoColor=white
 [PatreonBadge]: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3Dvlang%26type%3Dpatrons&style=flat
-[SponsorBadge]: https://camo.githubusercontent.com/da8bc40db5ed31e4b12660245535b5db67aa03ce/68747470733a2f2f696d672e736869656c64732e696f2f7374617469632f76313f6c6162656c3d53706f6e736f72266d6573736167653d254532253944254134266c6f676f3d476974487562
-[TwitterBadge]: https://img.shields.io/badge/follow-%40v_language-1DA1F2?logo=twitter&style=flat&logoColor=white&color=1da1f2
+[SponsorBadge]: https://img.shields.io/github/sponsors/medvednikov?style=flat&logo=github&logoColor=white
+[XBadge]: https://img.shields.io/badge/follow-%40v__language-1DA1F2?logo=x&style=flat&logoColor=white
 [ModulesBadge]: https://img.shields.io/badge/modules-reference-027d9c?logo=v&logoColor=white&logoWidth=10
 
 [WorkflowUrl]: https://github.com/vlang/v/commits/master
 [DiscordUrl]: https://discord.gg/vlang
 [PatreonUrl]: https://patreon.com/vlang
 [SponsorUrl]: https://github.com/sponsors/medvednikov
-[TwitterUrl]: https://twitter.com/v_language
+[XUrl]: https://x.com/v_language
 [ModulesUrl]: https://modules.vlang.io

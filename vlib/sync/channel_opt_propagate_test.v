@@ -1,8 +1,6 @@
 import sync
 
-const (
-	num_iterations = 10000
-)
+const num_iterations = 10000
 
 fn get_val_from_chan(ch chan i64) ?i64 {
 	r := <-ch?
@@ -36,4 +34,16 @@ fn test_channel_array_mut() {
 	chs[0].close()
 	sem.wait()
 	assert t == 100 + num_iterations
+}
+
+fn test_channel_close_with_error_propagates_after_buffer_drain() {
+	ch := chan i64{cap: 1}
+	ch <- i64(7)
+	ch.close(error('async failure'))
+	assert <-ch == i64(7)
+	_ := get_val_from_chan(ch) or {
+		assert err.msg() == 'async failure'
+		return
+	}
+	assert false
 }

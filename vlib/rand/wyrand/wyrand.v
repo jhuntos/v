@@ -1,17 +1,14 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module wyrand
 
-import hash
 import rand.buffer
 import rand.seed
 
 // Redefinition of some constants that we will need for pseudorandom number generation.
-const (
-	wyp0 = u64(0xa0761d6478bd642f)
-	wyp1 = u64(0xe7037ed1a0b428db)
-)
+const wyp0 = u64(0x2d358dccaa6c78a5)
+const wyp1 = u64(0x8bb84b93962eacc9)
 
 pub const seed_len = 2
 
@@ -36,7 +33,7 @@ pub fn (mut rng WyRandRNG) seed(seed_data []u32) {
 }
 
 // byte returns a uniformly distributed pseudorandom 8-bit unsigned positive `byte`.
-[inline]
+@[inline]
 pub fn (mut rng WyRandRNG) u8() u8 {
 	// Can we extract a value from the buffer?
 	if rng.bytes_left >= 1 {
@@ -54,7 +51,7 @@ pub fn (mut rng WyRandRNG) u8() u8 {
 }
 
 // u16 returns a pseudorandom 16bit int in range `[0, 2¹⁶)`.
-[inline]
+@[inline]
 pub fn (mut rng WyRandRNG) u16() u16 {
 	if rng.bytes_left >= 2 {
 		rng.bytes_left -= 2
@@ -69,7 +66,7 @@ pub fn (mut rng WyRandRNG) u16() u16 {
 }
 
 // u32 returns a pseudorandom 32bit int in range `[0, 2³²)`.
-[inline]
+@[inline]
 pub fn (mut rng WyRandRNG) u32() u32 {
 	if rng.bytes_left >= 4 {
 		rng.bytes_left -= 4
@@ -83,20 +80,8 @@ pub fn (mut rng WyRandRNG) u32() u32 {
 	return u32(ans)
 }
 
-// u64 returns a pseudorandom 64bit int in range `[0, 2⁶⁴)`.
-[inline]
-pub fn (mut rng WyRandRNG) u64() u64 {
-	unsafe {
-		mut seed1 := rng.state
-		seed1 += wyrand.wyp0
-		rng.state = seed1
-		return hash.wymum(seed1 ^ wyrand.wyp1, seed1)
-	}
-	return 0
-}
-
 // block_size returns the number of bits that the RNG can produce in a single iteration.
-[inline]
+@[inline]
 pub fn (mut rng WyRandRNG) block_size() int {
 	return 64
 }

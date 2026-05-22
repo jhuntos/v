@@ -32,7 +32,18 @@ struct CloseEventHandler {
 	ref      voidptr // referenced object
 }
 
+struct AttachedEventHandler {
+	handler  ServerAttachedFn  = unsafe { nil }
+	handler2 ServerAttachedFn2 = unsafe { nil }
+	is_ref   bool
+	ref      voidptr
+}
+
 pub type AcceptClientFn = fn (mut c ServerClient) !bool
+
+pub type ServerAttachedFn = fn (mut c ServerClient) !
+
+pub type ServerAttachedFn2 = fn (mut c ServerClient, v voidptr) !
 
 pub type SocketMessageFn = fn (mut c Client, msg &Message) !
 
@@ -69,8 +80,8 @@ pub fn (mut s Server) on_message(fun SocketMessageFn) {
 pub fn (mut s Server) on_message_ref(fun SocketMessageFn2, ref voidptr) {
 	s.message_callbacks << MessageEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -85,8 +96,27 @@ pub fn (mut s Server) on_close(fun SocketCloseFn) {
 pub fn (mut s Server) on_close_ref(fun SocketCloseFn2, ref voidptr) {
 	s.close_callbacks << CloseEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
+	}
+}
+
+// on_attached registers a callback after a client has been attached to the
+// server, the handshake response has been written, and callbacks are set up,
+// but before the blocking listen loop begins.
+pub fn (mut s Server) on_attached(fun ServerAttachedFn) {
+	s.attached_callbacks << AttachedEventHandler{
+		handler: fun
+	}
+}
+
+// on_attached_ref registers a callback after a client has been attached to the
+// server and provides a reference object.
+pub fn (mut s Server) on_attached_ref(fun ServerAttachedFn2, ref voidptr) {
+	s.attached_callbacks << AttachedEventHandler{
+		handler2: fun
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -101,8 +131,8 @@ pub fn (mut ws Client) on_message(fun SocketMessageFn) {
 pub fn (mut ws Client) on_message_ref(fun SocketMessageFn2, ref voidptr) {
 	ws.message_callbacks << MessageEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -117,8 +147,8 @@ pub fn (mut ws Client) on_error(fun SocketErrorFn) {
 pub fn (mut ws Client) on_error_ref(fun SocketErrorFn2, ref voidptr) {
 	ws.error_callbacks << ErrorEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -134,8 +164,8 @@ pub fn (mut ws Client) on_open(fun SocketOpenFn) {
 pub fn (mut ws Client) on_open_ref(fun SocketOpenFn2, ref voidptr) {
 	ws.open_callbacks << OpenEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -150,8 +180,8 @@ pub fn (mut ws Client) on_close(fun SocketCloseFn) {
 pub fn (mut ws Client) on_close_ref(fun SocketCloseFn2, ref voidptr) {
 	ws.close_callbacks << CloseEventHandler{
 		handler2: fun
-		ref: ref
-		is_ref: true
+		ref:      ref
+		is_ref:   true
 	}
 }
 
@@ -164,6 +194,16 @@ fn (mut s Server) send_connect_event(mut c ServerClient) !bool {
 	fun := s.accept_client_callbacks[0]
 	res := fun(mut c)!
 	return res
+}
+
+fn (mut s Server) send_attached_event(mut c ServerClient) ! {
+	for ev_handler in s.attached_callbacks {
+		if !ev_handler.is_ref {
+			ev_handler.handler(mut c)!
+		} else {
+			ev_handler.handler2(mut c, ev_handler.ref)!
+		}
+	}
 }
 
 // send_message_event invokes the on_message callback

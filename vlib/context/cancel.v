@@ -47,32 +47,37 @@ pub fn with_cancel(mut parent Context) (Context, CancelFn) {
 // new_cancel_context returns an initialized CancelContext.
 fn new_cancel_context(parent Context) &CancelContext {
 	return &CancelContext{
-		id: rand.uuid_v4()
+		id:      rand.uuid_v4()
 		context: parent
-		mutex: sync.new_mutex()
-		done: chan int{cap: 2}
-		err: none
+		mutex:   sync.new_mutex()
+		done:    chan int{cap: 2}
+		err:     none
 	}
 }
 
+// deadline always returns none for a CancelContext, since it has no deadline.
 pub fn (ctx &CancelContext) deadline() ?time.Time {
 	return none
 }
 
+// done returns the done channel, which is closed when this context is canceled.
 pub fn (mut ctx CancelContext) done() chan int {
-	ctx.mutex.@lock()
+	ctx.mutex.lock()
 	done := ctx.done
 	ctx.mutex.unlock()
 	return done
 }
 
+// err returns `canceled` after the context has been canceled, or `none` if not yet canceled.
 pub fn (mut ctx CancelContext) err() IError {
-	ctx.mutex.@lock()
+	ctx.mutex.lock()
 	err := ctx.err
 	ctx.mutex.unlock()
 	return err
 }
 
+// value returns the CancelContext itself if the key matches the cancel context key,
+// otherwise delegates to the parent context.
 pub fn (ctx &CancelContext) value(key Key) ?Any {
 	if key == cancel_context_key {
 		return ctx
@@ -80,6 +85,8 @@ pub fn (ctx &CancelContext) value(key Key) ?Any {
 	return ctx.context.value(key)
 }
 
+// str returns a string representation of the CancelContext,
+// showing the parent context name suffixed with '.with_cancel'.
 pub fn (ctx &CancelContext) str() string {
 	return context_name(ctx.context) + '.with_cancel'
 }
@@ -89,7 +96,7 @@ fn (mut ctx CancelContext) cancel(remove_from_parent bool, err IError) {
 		panic('context: internal error: missing cancel error')
 	}
 
-	ctx.mutex.@lock()
+	ctx.mutex.lock()
 	if ctx.err !is none {
 		ctx.mutex.unlock()
 		// already canceled
@@ -126,16 +133,22 @@ fn propagate_cancel(mut parent Context, mut child Canceler) {
 			child.cancel(false, parent.err())
 			return
 		}
+		else {}
 	}
 	mut p := parent_cancel_context(mut parent) or {
-		spawn fn (mut parent Context, mut child Canceler) {
-			pdone := parent.done()
+		// Pre-extract the parent done channel and pass it by value into the
+		// spawn. The goroutine may outlive the caller's stack frame, so
+		// dereferencing `parent` inside the spawn (e.g. via parent.done())
+		// reads freed stack memory once the caller returns and reuses that
+		// region — observed as a consistent segfault in vlib/context/cause_test.v
+		// on Linux x86_64. Mirrors the fix in onecontext.run_two_contexts.
+		spawn fn (pdone chan int, mut parent Context, mut child Canceler) {
 			select {
 				_ := <-pdone {
 					child.cancel(false, parent.err())
 				}
 			}
-		}(mut parent, mut child)
+		}(done, mut parent, mut child)
 		return
 	}
 
@@ -168,6 +181,7 @@ fn parent_cancel_context(mut parent Context) ?&CancelContext {
 		}
 		else {}
 	}
+
 	return none
 }
 

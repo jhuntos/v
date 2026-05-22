@@ -4,9 +4,7 @@ import os
 import term
 import time
 
-const (
-	term_colors = term.can_show_color_on_stdout()
-)
+const term_colors = term.can_show_color_on_stdout()
 
 pub fn set_verbose(on bool) {
 	// setting a global here would be the obvious solution,
@@ -20,7 +18,7 @@ pub fn set_verbose(on bool) {
 
 pub fn cprint(omessage string) {
 	mut message := omessage
-	if scripting.term_colors {
+	if term_colors {
 		message = term.cyan(message)
 	}
 	print(message)
@@ -29,7 +27,7 @@ pub fn cprint(omessage string) {
 
 pub fn cprint_strong(omessage string) {
 	mut message := omessage
-	if scripting.term_colors {
+	if term_colors {
 		message = term.bright_green(message)
 	}
 	print(message)
@@ -59,7 +57,7 @@ pub fn verbose_trace_strong(label string, omessage string) {
 	if os.getenv('VERBOSE').len > 0 {
 		slabel := '${time.now().format_ss_milli()} ${label}'
 		mut message := omessage
-		if scripting.term_colors {
+		if term_colors {
 			message = term.bright_green(message)
 		}
 		cprintln('# ${slabel:-43s} : ${message}')
@@ -73,7 +71,7 @@ pub fn verbose_trace_exec_result(x os.Result) {
 		lines := x.output.split_into_lines()
 		for oline in lines {
 			mut line := oline
-			if scripting.term_colors {
+			if term_colors {
 				line = term.bright_green(line)
 			}
 			cprintln('# ${lnum:3d}: ${line}')
@@ -149,6 +147,20 @@ pub fn run(cmd string) string {
 	return ''
 }
 
+// frun runs a command, tracing its results, and returning ONLY its output, or an error, if it failed
+pub fn frun(cmd string) !string {
+	verbose_trace_strong(modfn(@MOD, @FN), cmd)
+	x := os.execute(cmd)
+	if x.exit_code != 0 {
+		verbose_trace(modfn(@MOD, @FN), '## failed.')
+		verbose_trace(modfn(@MOD, @FN), '## failure   code: ${x.exit_code}')
+		verbose_trace(modfn(@MOD, @FN), '## failure output: ${x.output}')
+		return error_with_code('failed cmd: ${cmd}', x.exit_code)
+	}
+	verbose_trace_exec_result(x)
+	return x.output.trim_right('\r\n')
+}
+
 pub fn exit_0_status(cmd string) bool {
 	verbose_trace_strong(modfn(@MOD, @FN), cmd)
 	x := os.execute(cmd)
@@ -183,6 +195,6 @@ pub fn used_tools_must_exist(tools []string) {
 pub fn show_sizes_of_files(files []string) {
 	for f in files {
 		size := os.file_size(f)
-		println('${size} ${f}') // println('${size:10d} $f')
+		println('${size} ${f}') // println('${size:10d} ${f}')
 	}
 }
